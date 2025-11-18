@@ -7,9 +7,8 @@
   "meta": {
     "templateId": "js-start"
   },
-  "input": "./.actor/INPUT_SCHEMA.json",
+  "input": "./INPUT_SCHEMA.json",
   "dockerfile": "./Dockerfile",
   "readme": "./README.md",
   "categories": ["AI", "VIDEO"]
 }
-
