@@ -1,19 +1,20 @@
-"""Hook analysis service using OpenRouter LLM."""
+"""Hook classification service using OpenRouter LLM."""
 import json
+import logging
 import os
-import httpx
-from typing import Dict, Any
 from uuid import UUID
-from tenacity import retry, stop_after_attempt, wait_exponential
-from supabase import Client
+from typing import Dict, Any
 
+import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from supabase import Client
 from services.supabase_client import get_supabase_client
 
+logger = logging.getLogger(__name__)
 
-# Константы для LLM
-OPENROUTER_MODEL = "openrouter/auto"  # или "meta-llama/llama-3.1-70b-instruct"
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
+# Модель для анализа хуков
+LLM_MODEL = "openrouter/auto"  # или "meta-llama/llama-3.1-70b-instruct", "anthropic/claude-3.5-sonnet"
 
 SYSTEM_PROMPT = """You are an Indonesian Instagram hooks analyzer. Your task is to analyze hook text from Instagram reels and classify it into categories.
 
@@ -28,8 +29,18 @@ Analyze the provided hook text and return a JSON object with the following struc
 
 Return ONLY valid JSON, no additional text."""
 
+USER_PROMPT_TEMPLATE = """Analyze this Instagram reel hook text:
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+{hook_raw_text}
+
+Return the classification as JSON."""
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 def classify_hook_with_llm(reel_id: UUID) -> None:
     """
     Берёт hook_raw_text для reel_id из reel_analysis_raw,
@@ -37,34 +48,32 @@ def classify_hook_with_llm(reel_id: UUID) -> None:
     сохраняет запись в hooks.
     """
     supabase = get_supabase_client()
+    api_key = os.getenv("OPENROUTER_API_KEY")
     
-    # Проверяем, есть ли уже хук для этого рилса
-    existing = supabase.table("hooks").select("id").eq("reel_id", str(reel_id)).execute()
-    if existing.data:
-        print(f"Reel {reel_id} already has hook classification, skipping")
-        return
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY must be set in environment")
     
     # Получаем hook_raw_text
     result = supabase.table("reel_analysis_raw").select("hook_raw_text").eq("reel_id", str(reel_id)).execute()
     
     if not result.data:
-        raise ValueError(f"No raw analysis found for reel {reel_id}")
+        raise ValueError(f"Reel {reel_id} не имеет записи в reel_analysis_raw")
     
     hook_raw_text = result.data[0]["hook_raw_text"]
     
-    if not hook_raw_text or not hook_raw_text.strip():
-        print(f"Empty hook_raw_text for reel {reel_id}, skipping")
+    if not hook_raw_text:
+        logger.warning(f"Reel {reel_id} имеет пустой hook_raw_text")
         return
     
-    # Вызываем LLM
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY must be set in environment")
+    logger.info(f"Классификация хука для reel {reel_id}")
     
-    response = _call_openrouter(hook_raw_text, api_key)
+    # Вызываем OpenRouter API
+    user_prompt = USER_PROMPT_TEMPLATE.format(hook_raw_text=hook_raw_text)
+    
+    response = _call_openrouter(api_key, user_prompt)
     
     # Парсим JSON ответ
-    hook_data = _parse_llm_response(response, reel_id)
+    hook_data = _parse_llm_response(response)
     
     # Сохраняем в hooks
     hook_record = {
@@ -74,93 +83,70 @@ def classify_hook_with_llm(reel_id: UUID) -> None:
         "tone": hook_data["tone"],
         "starts_with": hook_data["starts_with"],
         "language": hook_data["language"],
-        "model_name": OPENROUTER_MODEL,
+        "model_name": LLM_MODEL,
     }
     
     supabase.table("hooks").insert(hook_record).execute()
+    logger.info(f"Хук сохранён для reel {reel_id}: {hook_data['hook_type']}")
+
+
+def _call_openrouter(api_key: str, user_prompt: str) -> str:
+    """Вызывает OpenRouter API и возвращает сырой ответ."""
+    url = "https://openrouter.ai/api/v1/chat/completions"
     
-    print(f"Classified hook for reel {reel_id}: {hook_data['hook_type']}")
-
-
-def _call_openrouter(hook_text: str, api_key: str) -> str:
-    """Вызывает OpenRouter API и возвращает ответ."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/your-repo",  # Опционально
     }
     
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": LLM_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": hook_text},
+            {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.3,
     }
     
     with httpx.Client(timeout=60.0) as client:
-        response = client.post(OPENROUTER_API_URL, json=payload, headers=headers)
+        response = client.post(url, headers=headers, json=payload)
         response.raise_for_status()
-        
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        
+        # Извлекаем текст ответа
+        content = data["choices"][0]["message"]["content"]
+        logger.debug(f"OpenRouter response: {content}")
+        
+        return content
 
 
-def _parse_llm_response(response_text: str, reel_id: UUID) -> Dict[str, Any]:
+def _parse_llm_response(response_text: str) -> Dict[str, Any]:
     """Парсит JSON ответ от LLM, с обработкой ошибок."""
-    # Пытаемся извлечь JSON из ответа (на случай если LLM добавил текст)
+    # Пытаемся найти JSON в ответе
     response_text = response_text.strip()
     
-    # Ищем JSON объект
-    start_idx = response_text.find("{")
-    end_idx = response_text.rfind("}") + 1
+    # Если ответ начинается с ```json или ```, удаляем маркеры
+    if response_text.startswith("```json"):
+        response_text = response_text[7:]
+    elif response_text.startswith("```"):
+        response_text = response_text[3:]
     
-    if start_idx == -1 or end_idx == 0:
-        raise ValueError(f"Invalid LLM response format for reel {reel_id}: {response_text}")
+    if response_text.endswith("```"):
+        response_text = response_text[:-3]
     
-    json_str = response_text[start_idx:end_idx]
+    response_text = response_text.strip()
     
     try:
-        data = json.loads(json_str)
+        data = json.loads(response_text)
+        
+        # Валидация обязательных полей
+        required_fields = ["hook_text", "hook_type", "tone", "starts_with", "language"]
+        for field in required_fields:
+            if field not in data:
+                raise ValueError(f"Отсутствует поле {field} в ответе LLM")
+        
+        return data
     except json.JSONDecodeError as e:
-        print(f"JSON decode error for reel {reel_id}: {e}")
-        print(f"Response text: {response_text}")
-        raise
-    
-    # Валидация полей
-    required_fields = ["hook_text", "hook_type", "tone", "starts_with", "language"]
-    for field in required_fields:
-        if field not in data:
-            raise ValueError(f"Missing field '{field}' in LLM response for reel {reel_id}")
-    
-    # Обрезаем hook_text до 160 символов
-    if len(data["hook_text"]) > 160:
-        data["hook_text"] = data["hook_text"][:160]
-    
-    return data
-
-
-def classify_all_pending_hooks() -> None:
-    """Классифицирует хуки для всех рилсов с raw-анализом, но без hooks."""
-    supabase = get_supabase_client()
-    
-    # Находим рилсы с raw-анализом, но без hooks
-    result = supabase.table("reel_analysis_raw").select("reel_id").execute()
-    
-    reel_ids_with_raw = {UUID(row["reel_id"]) for row in result.data}
-    
-    hooks_result = supabase.table("hooks").select("reel_id").execute()
-    reel_ids_with_hooks = {UUID(row["reel_id"]) for row in hooks_result.data}
-    
-    pending_reel_ids = reel_ids_with_raw - reel_ids_with_hooks
-    
-    print(f"Found {len(pending_reel_ids)} reels pending hook classification")
-    
-    for reel_id in pending_reel_ids:
-        try:
-            classify_hook_with_llm(reel_id)
-        except Exception as e:
-            print(f"Error classifying hook for reel {reel_id}: {e}")
-            continue
+        logger.error(f"Невалидный JSON от LLM: {response_text}")
+        raise ValueError(f"Не удалось распарсить JSON ответ: {e}")
 
