@@ -1,6 +1,6 @@
 # Instagram Reels Analysis Pipeline
 
-Сервис для обработки Instagram-рилсов из Apify: скачивание видео, анализ текста и хуков, расчёт метрик.
+Сервис для обработки Instagram-рилсов из Apify JSON: скачивание видео, анализ текста (ASR + OCR), классификация хуков через LLM и расчёт метрик.
 
 ## Установка
 
@@ -9,128 +9,99 @@
 pip install -r requirements.txt
 ```
 
-2. Скопируйте `.env.example` в `.env` и заполните переменные окружения:
+2. Установите системные зависимости:
+- **ffmpeg**: для обработки видео/аудио
+- **tesseract**: для OCR (с поддержкой indonesian и english языков)
+
+На macOS:
+```bash
+brew install ffmpeg tesseract tesseract-lang
+```
+
+На Ubuntu/Debian:
+```bash
+sudo apt-get install ffmpeg tesseract-ocr tesseract-ocr-ind
+```
+
+3. Создайте файл `.env` на основе `.env.example`:
 ```bash
 cp .env.example .env
 ```
 
-3. Убедитесь, что установлены системные зависимости:
-- FFmpeg (для обработки видео/аудио)
-  ```bash
-  # macOS
-  brew install ffmpeg
-  # Ubuntu/Debian
-  sudo apt-get install ffmpeg
-  ```
-- Tesseract OCR (для распознавания текста)
-  ```bash
-  # macOS
-  brew install tesseract tesseract-lang
-  # Ubuntu/Debian
-  sudo apt-get install tesseract-ocr tesseract-ocr-ind
-  ```
+Заполните переменные:
+- `SUPABASE_URL` - URL вашего Supabase проекта
+- `SUPABASE_SERVICE_ROLE_KEY` - Service Role Key из Supabase
+- `OPENROUTER_API_KEY` - API ключ OpenRouter
+
+## Настройка Supabase
+
+1. **Создание таблиц**: Выполните SQL-скрипт из `migrations/001_initial_schema.sql` в SQL Editor вашего Supabase проекта.
+
+2. **Создание Storage bucket**: 
+   - Перейдите в Storage → Create a new bucket
+   - Название: `reels`
+   - Public bucket: можно сделать публичным или приватным (в зависимости от ваших нужд)
+   - File size limit: установите подходящий лимит (например, 100MB)
+
+3. **Проверка переменных окружения**: Убедитесь, что `.env` файл содержит правильные значения для `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Использование
 
-### Инициализация базы данных
-
-1. Выполните SQL-скрипт из `migrations/001_initial_schema.sql` в Supabase SQL Editor.
-
-2. Создайте Storage bucket для видео:
-   - Откройте Supabase Dashboard → Storage
-   - Создайте новый bucket с именем `reels`
-   - Установите как приватный (public: false)
-   - Настройте политики доступа по необходимости
-
-### Запуск пайплайна
-
+### 1. Импорт JSON от Apify
 ```bash
-# 1. Импорт JSON от Apify
 python main.py ingest --json path/to/apify_data.json
+```
 
-# 2. Скачивание видео
+### 2. Скачивание видео
+```bash
 python main.py download-videos
+```
 
-# 3. Извлечение текста (ASR + OCR)
+### 3. Анализ текста (ASR + OCR)
+```bash
 python main.py analyze-raw
+```
 
-# 4. Классификация хуков через LLM
+### 4. Классификация хуков через LLM
+```bash
 python main.py classify-hooks
+```
 
-# 5. Расчёт метрик и скоринг
+### 5. Обновление метрик
+```bash
 python main.py update-scores
 ```
 
 ## Структура проекта
 
-- `models/` - Pydantic модели для данных
-  - `apify_reel.py` - модель для JSON от Apify
-- `services/` - Бизнес-логика сервисов
-  - `supabase_client.py` - инициализация Supabase клиента
-  - `ingestion.py` - импорт JSON, создание creators/reels
-  - `downloader.py` - скачивание видео и загрузка в Storage
-  - `analyzer.py` - основной анализатор (ASR + OCR + caption)
-  - `analyzer_audio.py` - Whisper ASR
-  - `analyzer_ocr.py` - OCR извлечение текста
-  - `analyzer_hooks.py` - классификация хуков через OpenRouter
-  - `scoring.py` - расчёт engagement_rate и hook_score
-- `main.py` - CLI точка входа
-- `migrations/` - SQL миграции для базы данных
-
-## Переменные окружения
-
-Создайте файл `.env` со следующими переменными:
-
 ```
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-OPENROUTER_API_KEY=your_openrouter_api_key
+project/
+  main.py                  # CLI точка входа
+  models/
+    apify_reel.py          # Pydantic модели для Apify JSON
+  services/
+    supabase_client.py     # Инициализация Supabase клиента
+    ingestion.py           # Парсинг JSON, создание creators/reels
+    downloader.py          # Скачивание видео и загрузка в Storage
+    analyzer_audio.py      # Вырезка аудио, Whisper транскрипция
+    analyzer_ocr.py        # Извлечение кадров + OCR
+    analyzer_raw.py        # Комбинированный анализ (ASR + OCR + caption)
+    analyzer_hooks.py      # OpenRouter LLM классификация хуков
+    scoring.py             # Расчёт engagement_rate и hook_score
 ```
 
-## Пример использования
+## Схема БД
 
-```bash
-# Импорт данных
-python main.py ingest --json example_apify_data.json
-
-# Обработка всех этапов последовательно
-python main.py download-videos
-python main.py analyze-raw
-python main.py classify-hooks
-python main.py update-scores
-
-# Параллельная обработка (быстрее для больших объёмов)
-python main.py download-videos --parallel --workers 8
-python main.py analyze-raw --parallel --workers 4
-python main.py classify-hooks --parallel --workers 6
-```
-
-## Параллельная обработка
-
-Проект поддерживает параллельную обработку для ускорения работы:
-
-- **`--parallel`** — включает параллельную обработку
-- **`--workers N`** — количество параллельных воркеров (по умолчанию: 4 для download/classify, 2 для analysis)
-
-**Рекомендации:**
-- `download-videos`: используйте threads (I/O-bound), 4-8 воркеров
-- `analyze-raw`: используйте processes (CPU-bound), 2-4 воркера (зависит от CPU)
-- `classify-hooks`: используйте threads (I/O-bound, ожидание API), 4-8 воркеров
-
-**Пример:**
-```bash
-# Скачать 100 видео параллельно (8 потоков)
-python main.py download-videos --parallel --workers 8
-
-# Анализировать видео параллельно (4 процесса)
-python main.py analyze-raw --parallel --workers 4
-```
+См. описание таблиц в документации:
+- `creators` - информация о креаторах
+- `reels` - метаданные рилсов
+- `reel_analysis_raw` - сырой анализ текста
+- `hooks` - классифицированные хуки
 
 ## Примечания
 
-- Видео скачиваются напрямую с CDN URL от Apify (без обрезки)
-- Whisper использует модель `medium` (можно изменить в `analyzer_audio.py`)
-- OpenRouter использует модель `openrouter/auto` (можно изменить в `analyzer_hooks.py`)
-- Все операции имеют встроенные retry механизмы для сетевых ошибок
-- Параллельная обработка автоматически создаёт Supabase клиент в каждом воркере
+- Видео скачиваются стримом с ретраями при сетевых ошибках
+- ASR использует faster-whisper (модель `medium`) с приоритетом для indonesian языка
+- OCR извлекает 2-4 кадра из первых 2-3 секунд видео
+- LLM классификация использует OpenRouter API (модель настраивается в `services/analyzer_hooks.py`)
 

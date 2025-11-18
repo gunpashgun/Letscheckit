@@ -1,7 +1,6 @@
--- Migration: Initial schema for Instagram Reels Analysis Pipeline
--- Run this in Supabase SQL Editor
+-- Схема БД для Instagram Reels Analysis Pipeline
 
--- Table: creators
+-- Таблица creators
 create table if not exists creators (
   id uuid primary key default gen_random_uuid(),
   ig_owner_id text not null,
@@ -14,7 +13,7 @@ create table if not exists creators (
   unique (ig_owner_id)
 );
 
--- Table: reels
+-- Таблица reels
 create table if not exists reels (
   id uuid primary key default gen_random_uuid(),
   ig_reel_id text not null,
@@ -40,7 +39,7 @@ create table if not exists reels (
 
   raw_json jsonb,             -- весь объект из Apify для отладки
 
-  -- скоринг
+  -- метрики и скоринг
   engagement_rate numeric,
   hook_score numeric,
 
@@ -49,7 +48,7 @@ create table if not exists reels (
   unique (ig_reel_id)
 );
 
--- Table: reel_analysis_raw
+-- Таблица reel_analysis_raw
 create table if not exists reel_analysis_raw (
   id uuid primary key default gen_random_uuid(),
   reel_id uuid references reels(id),
@@ -57,10 +56,11 @@ create table if not exists reel_analysis_raw (
   screen_text text,           -- текст с экрана (OCR)
   caption_hook_text text,     -- первые строки caption
   hook_raw_text text,         -- конкатенация всего
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  unique (reel_id)
 );
 
--- Table: hooks
+-- Таблица hooks
 create table if not exists hooks (
   id uuid primary key default gen_random_uuid(),
   reel_id uuid references reels(id),
@@ -80,9 +80,4 @@ create index if not exists idx_reels_hook_score on reels(hook_score);
 create index if not exists idx_reel_analysis_raw_reel_id on reel_analysis_raw(reel_id);
 create index if not exists idx_hooks_reel_id on hooks(reel_id);
 create index if not exists idx_hooks_hook_type on hooks(hook_type);
-
--- Создание Storage bucket для видео (выполнить вручную через Supabase Dashboard или API)
--- Bucket name: "reels"
--- Public: false (приватный)
--- File size limit: по необходимости
 

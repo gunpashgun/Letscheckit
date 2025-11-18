@@ -1,10 +1,13 @@
 """Scoring service for reels."""
+import logging
 import math
 from uuid import UUID
 from typing import Optional
-from supabase import Client
 
+from supabase import Client
 from services.supabase_client import get_supabase_client
+
+logger = logging.getLogger(__name__)
 
 
 def update_reel_scores(reel_id: UUID, followers: Optional[int] = None) -> None:
@@ -15,79 +18,56 @@ def update_reel_scores(reel_id: UUID, followers: Optional[int] = None) -> None:
     supabase = get_supabase_client()
     
     # Получаем данные рилса
-    result = supabase.table("reels").select("*").eq("id", str(reel_id)).execute()
+    result = supabase.table("reels").select(
+        "likes_count, comments_count, video_play_count, video_view_count, creator_id"
+    ).eq("id", str(reel_id)).execute()
     
     if not result.data:
-        raise ValueError(f"Reel {reel_id} not found")
+        raise ValueError(f"Reel {reel_id} не найден в БД")
     
-    reel = result.data[0]
+    reel_data = result.data[0]
+    likes = reel_data.get("likes_count", 0) or 0
+    comments = reel_data.get("comments_count", 0) or 0
+    plays = reel_data.get("video_play_count") or reel_data.get("video_view_count") or 0
+    creator_id = reel_data.get("creator_id")
     
-    # Получаем метрики
-    likes = reel.get("likes_count") or 0
-    comments = reel.get("comments_count") or 0
-    plays = reel.get("video_play_count") or reel.get("video_view_count") or 0
+    # Если followers не передан, пытаемся получить из creators
+    if followers is None and creator_id:
+        creator_result = supabase.table("creators").select("followers").eq("id", creator_id).execute()
+        
+        if creator_result.data:
+            followers = creator_result.data[0].get("followers")
     
-    # Считаем engagement rate
+    # 1. Engagement Rate
     if plays > 0:
         engagement_rate = (likes + comments) / plays
     else:
         engagement_rate = 0.0
     
-    # Считаем account_weight
+    # 2. Account weight
     if followers and followers > 0:
         account_weight = 1 / math.log10(followers + 10_000)
     else:
         account_weight = 1.0
     
-    # Финальный hook_score
-    # Вариант 1: простой
-    hook_score = engagement_rate * account_weight
+    # 3. Hook score (более сложная формула)
+    if plays > 0 and followers and followers > 0:
+        # ER * (plays / followers) ** 0.3 * account_weight
+        hook_score = engagement_rate * (plays / followers) ** 0.3 * account_weight
+    elif plays > 0:
+        # Если нет followers, используем упрощённую формулу
+        hook_score = engagement_rate * account_weight
+    else:
+        hook_score = 0.0
     
-    # Вариант 2: посложнее (раскомментируйте если нужно)
-    # if followers and followers > 0:
-    #     hook_score = engagement_rate * (plays / followers) ** 0.3 * account_weight
-    # else:
-    #     hook_score = engagement_rate * account_weight
+    logger.info(
+        f"Reel {reel_id}: ER={engagement_rate:.4f}, "
+        f"account_weight={account_weight:.4f}, hook_score={hook_score:.4f}"
+    )
     
     # Обновляем в БД
     supabase.table("reels").update({
         "engagement_rate": engagement_rate,
         "hook_score": hook_score,
     }).eq("id", str(reel_id)).execute()
-    
-    print(f"Updated scores for reel {reel_id}: ER={engagement_rate:.4f}, Score={hook_score:.4f}")
-
-
-def update_all_scores(followers_map: Optional[dict[UUID, int]] = None) -> None:
-    """
-    Обновляет метрики для всех рилсов.
-    
-    Args:
-        followers_map: словарь {reel_id: followers_count} для каждого рилса.
-                      Если None, используется followers из таблицы creators.
-    """
-    supabase = get_supabase_client()
-    
-    result = supabase.table("reels").select("id, creator_id").execute()
-    
-    reel_ids = [UUID(row["id"]) for row in result.data]
-    creator_ids = {UUID(row["id"]): UUID(row["creator_id"]) for row in result.data}
-    
-    print(f"Found {len(reel_ids)} reels to update scores")
-    
-    # Если followers_map не передан, пытаемся получить из creators
-    if followers_map is None:
-        followers_map = {}
-        for reel_id, creator_id in creator_ids.items():
-            creator_result = supabase.table("creators").select("followers").eq("id", str(creator_id)).execute()
-            if creator_result.data and creator_result.data[0].get("followers"):
-                followers_map[reel_id] = creator_result.data[0]["followers"]
-    
-    for reel_id in reel_ids:
-        followers = followers_map.get(reel_id)
-        try:
-            update_reel_scores(reel_id, followers)
-        except Exception as e:
-            print(f"Error updating scores for reel {reel_id}: {e}")
-            continue
 
