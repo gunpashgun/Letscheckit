@@ -1,77 +1,59 @@
 """OCR analysis service."""
-import logging
-from pathlib import Path
-from uuid import UUID
-import tempfile
-
 import cv2
 import pytesseract
-from PIL import Image
+from typing import List
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
 
-
-def extract_frames(video_path: Path, num_frames: int = 3, start_time: float = 0.0, duration: float = 3.0) -> list[Image.Image]:
+def extract_frames_ocr(video_path: str, num_frames: int = 3, start_time: float = 0.0, end_time: float = 3.0) -> str:
     """
-    Извлекает кадры из видео.
-    Возвращает список PIL Images.
+    Извлекает текст с экрана из первых кадров видео через OCR.
+    
+    Args:
+        video_path: путь к видеофайлу
+        num_frames: количество кадров для обработки
+        start_time: начало временного диапазона (секунды)
+        end_time: конец временного диапазона (секунды)
+    
+    Returns:
+        Склеенный текст со всех кадров
     """
-    cap = cv2.VideoCapture(str(video_path))
-    
-    if not cap.isOpened():
-        raise RuntimeError(f"Не удалось открыть видео: {video_path}")
-    
+    cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
     start_frame = int(start_time * fps)
-    end_frame = int((start_time + duration) * fps)
+    end_frame = min(int(end_time * fps), total_frames)
     
-    frames = []
-    frame_interval = max(1, (end_frame - start_frame) // num_frames)
+    frame_indices = []
+    if num_frames == 1:
+        frame_indices = [start_frame]
+    else:
+        step = (end_frame - start_frame) / (num_frames - 1)
+        frame_indices = [int(start_frame + i * step) for i in range(num_frames)]
     
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    texts = []
     
-    for i in range(num_frames):
-        frame_num = start_frame + i * frame_interval
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+    for frame_idx in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
         
         if not ret:
-            break
+            continue
         
-        # Конвертируем BGR в RGB для PIL
+        # Конвертируем в RGB для pytesseract
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(frame_rgb)
-        frames.append(pil_image)
+        
+        # Извлекаем текст
+        try:
+            text = pytesseract.image_to_string(frame_rgb, lang="ind+eng")
+            if text.strip():
+                texts.append(text.strip())
+        except Exception as e:
+            print(f"OCR error on frame {frame_idx}: {e}")
+            continue
     
     cap.release()
-    return frames
-
-
-def ocr_frames(frames: list[Image.Image]) -> str:
-    """
-    Применяет OCR к списку кадров.
-    Возвращает склеенный текст.
-    """
-    texts = []
     
-    for frame in frames:
-        try:
-            # Пробуем разные языки (indonesian + english)
-            text_id = pytesseract.image_to_string(frame, lang="ind+eng")
-            texts.append(text_id.strip())
-        except Exception as e:
-            logger.warning(f"Ошибка OCR для кадра: {e}")
-            # Fallback на английский
-            try:
-                text_en = pytesseract.image_to_string(frame, lang="eng")
-                texts.append(text_en.strip())
-            except:
-                pass
-    
-    # Убираем дубликаты и пустые строки
-    unique_texts = [t for t in texts if t]
-    combined = " ".join(unique_texts)
-    
-    logger.info(f"OCR извлечено {len(unique_texts)} текстовых блоков")
-    return combined
+    return " | ".join(texts).strip()
 

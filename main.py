@@ -1,205 +1,135 @@
-#!/usr/bin/env python3
-"""Main CLI for Instagram reels processing pipeline."""
+"""Main CLI entry point for Instagram Reels Analysis Pipeline."""
 import argparse
-import logging
-import os
 import sys
 from pathlib import Path
-from uuid import UUID
-
-from dotenv import load_dotenv
 
 from services.ingestion import ingest_apify_json
-from services.downloader import download_and_store_reel_video
-from services.analyzer_raw import analyze_reel_raw
-from services.analyzer_hooks import classify_hook_with_llm
-from services.scoring import update_reel_scores
-from services.supabase_client import get_supabase_client
-
-# Загружаем переменные окружения
-load_dotenv()
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+from services.downloader import download_all_pending_videos
+from services.analyzer import analyze_all_pending_reels
+from services.analyzer_hooks import classify_all_pending_hooks
+from services.scoring import update_all_scores
+from services.parallel import (
+    process_downloads_parallel,
+    process_analysis_parallel,
+    process_hooks_parallel,
 )
-logger = logging.getLogger(__name__)
+from services.progress import print_download_progress
 
 
 def cmd_ingest(args):
-    """Команда: ingest --json path/to/file.json"""
+    """Команда импорта JSON от Apify."""
     json_path = Path(args.json)
     
     if not json_path.exists():
-        logger.error(f"Файл не найден: {json_path}")
+        print(f"Error: File {json_path} not found", file=sys.stderr)
         sys.exit(1)
+    
+    print(f"Ingesting reels from {json_path}...")
     
     try:
         reel_ids = ingest_apify_json(str(json_path))
-        logger.info(f"Успешно обработано {len(reel_ids)} рилсов")
-        print(f"Reel IDs: {[str(rid) for rid in reel_ids[:5]]}...")  # Показываем первые 5
+        print(f"Successfully ingested {len(reel_ids)} reels")
     except Exception as e:
-        logger.error(f"Ошибка инжеста: {e}", exc_info=True)
+        print(f"Error during ingestion: {e}", file=sys.stderr)
         sys.exit(1)
 
 
 def cmd_download_videos(args):
-    """Команда: download-videos"""
-    supabase = get_supabase_client()
+    """Команда скачивания видео."""
+    print("Downloading videos for all pending reels...")
     
-    # Получаем все reels без storage_video_path
-    result = supabase.table("reels").select("id").is_("storage_video_path", "null").execute()
-    
-    if not result.data:
-        logger.info("Нет рилсов для скачивания")
-        return
-    
-    reel_ids = [UUID(item["id"]) for item in result.data]
-    logger.info(f"Найдено {len(reel_ids)} рилсов для скачивания")
-    
-    success_count = 0
-    error_count = 0
-    
-    for reel_id in reel_ids:
-        try:
-            logger.info(f"Скачивание видео для reel {reel_id}")
-            download_and_store_reel_video(reel_id)
-            success_count += 1
-        except Exception as e:
-            logger.error(f"Ошибка скачивания reel {reel_id}: {e}", exc_info=True)
-            error_count += 1
-    
-    logger.info(f"Завершено: успешно {success_count}, ошибок {error_count}")
+    try:
+        if args.parallel:
+            process_downloads_parallel(max_workers=args.workers)
+        else:
+            download_all_pending_videos()
+        print("Video download completed")
+    except Exception as e:
+        print(f"Error during video download: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_analyze_raw(args):
-    """Команда: analyze-raw"""
-    supabase = get_supabase_client()
+    """Команда анализа текста (ASR + OCR)."""
+    print("Analyzing raw text for all pending reels...")
     
-    # Получаем все reels с storage_video_path, но без записи в reel_analysis_raw
-    result = supabase.table("reels").select("id").not_.is_("storage_video_path", "null").execute()
-    
-    if not result.data:
-        logger.info("Нет рилсов для анализа")
-        return
-    
-    all_reel_ids = [UUID(item["id"]) for item in result.data]
-    
-    # Проверяем, какие уже имеют анализ
-    analyzed_result = supabase.table("reel_analysis_raw").select("reel_id").execute()
-    analyzed_ids = {UUID(item["reel_id"]) for item in analyzed_result.data} if analyzed_result.data else set()
-    
-    reel_ids = [rid for rid in all_reel_ids if rid not in analyzed_ids]
-    
-    if not reel_ids:
-        logger.info("Все рилсы уже проанализированы")
-        return
-    
-    logger.info(f"Найдено {len(reel_ids)} рилсов для анализа")
-    
-    success_count = 0
-    error_count = 0
-    
-    for reel_id in reel_ids:
-        try:
-            logger.info(f"Анализ рилса {reel_id}")
-            analyze_reel_raw(reel_id)
-            success_count += 1
-        except Exception as e:
-            logger.error(f"Ошибка анализа reel {reel_id}: {e}", exc_info=True)
-            error_count += 1
-    
-    logger.info(f"Завершено: успешно {success_count}, ошибок {error_count}")
+    try:
+        if args.parallel:
+            process_analysis_parallel(max_workers=args.workers)
+        else:
+            analyze_all_pending_reels()
+        print("Raw analysis completed")
+    except Exception as e:
+        print(f"Error during raw analysis: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_classify_hooks(args):
-    """Команда: classify-hooks"""
-    supabase = get_supabase_client()
+    """Команда классификации хуков через LLM."""
+    print("Classifying hooks for all pending reels...")
     
-    # Получаем все reels с raw анализом, но без hooks
-    result = supabase.table("reel_analysis_raw").select("reel_id").execute()
-    
-    if not result.data:
-        logger.info("Нет рилсов с raw анализом")
-        return
-    
-    all_reel_ids = [UUID(item["reel_id"]) for item in result.data]
-    
-    # Проверяем, какие уже имеют hooks
-    hooks_result = supabase.table("hooks").select("reel_id").execute()
-    hooked_ids = {UUID(item["reel_id"]) for item in hooks_result.data} if hooks_result.data else set()
-    
-    reel_ids = [rid for rid in all_reel_ids if rid not in hooked_ids]
-    
-    if not reel_ids:
-        logger.info("Все рилсы уже классифицированы")
-        return
-    
-    logger.info(f"Найдено {len(reel_ids)} рилсов для классификации")
-    
-    success_count = 0
-    error_count = 0
-    
-    for reel_id in reel_ids:
-        try:
-            logger.info(f"Классификация хука для reel {reel_id}")
-            classify_hook_with_llm(reel_id)
-            success_count += 1
-        except Exception as e:
-            logger.error(f"Ошибка классификации reel {reel_id}: {e}", exc_info=True)
-            error_count += 1
-    
-    logger.info(f"Завершено: успешно {success_count}, ошибок {error_count}")
+    try:
+        if args.parallel:
+            process_hooks_parallel(max_workers=args.workers)
+        else:
+            classify_all_pending_hooks()
+        print("Hook classification completed")
+    except Exception as e:
+        print(f"Error during hook classification: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_update_scores(args):
-    """Команда: update-scores"""
-    supabase = get_supabase_client()
+    """Команда обновления метрик и скоринга."""
+    print("Updating scores for all reels...")
     
-    # Получаем все reels
-    result = supabase.table("reels").select("id").execute()
-    
-    if not result.data:
-        logger.info("Нет рилсов в БД")
-        return
-    
-    reel_ids = [UUID(item["id"]) for item in result.data]
-    logger.info(f"Обновление скоринга для {len(reel_ids)} рилсов")
-    
-    success_count = 0
-    error_count = 0
-    
-    for reel_id in reel_ids:
-        try:
-            update_reel_scores(reel_id)
-            success_count += 1
-        except Exception as e:
-            logger.error(f"Ошибка обновления скора для reel {reel_id}: {e}", exc_info=True)
-            error_count += 1
-    
-    logger.info(f"Завершено: успешно {success_count}, ошибок {error_count}")
+    try:
+        update_all_scores()
+        print("Score update completed")
+    except Exception as e:
+        print(f"Error during score update: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Instagram Reels Processing Pipeline")
-    subparsers = parser.add_subparsers(dest="command", help="Команды")
+    """Main CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="Instagram Reels Analysis Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     
-    # ingest
-    ingest_parser = subparsers.add_parser("ingest", help="Импорт JSON от Apify")
-    ingest_parser.add_argument("--json", required=True, help="Путь к JSON файлу")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
-    # download-videos
-    subparsers.add_parser("download-videos", help="Скачать видео для всех рилсов без storage_video_path")
+    # Команда ingest
+    ingest_parser = subparsers.add_parser("ingest", help="Import JSON from Apify")
+    ingest_parser.add_argument("--json", required=True, help="Path to Apify JSON file")
+    ingest_parser.set_defaults(func=cmd_ingest)
     
-    # analyze-raw
-    subparsers.add_parser("analyze-raw", help="Анализ текста (ASR + OCR + caption) для всех рилсов")
+    # Команда download-videos
+    download_parser = subparsers.add_parser("download-videos", help="Download videos for pending reels")
+    download_parser.add_argument("--parallel", action="store_true", help="Use parallel processing")
+    download_parser.add_argument("--workers", type=int, default=4, help="Number of parallel workers (default: 4)")
+    download_parser.set_defaults(func=cmd_download_videos)
     
-    # classify-hooks
-    subparsers.add_parser("classify-hooks", help="Классификация хуков через LLM для всех рилсов")
+    # Команда analyze-raw
+    analyze_parser = subparsers.add_parser("analyze-raw", help="Extract text (ASR + OCR) for pending reels")
+    analyze_parser.add_argument("--parallel", action="store_true", help="Use parallel processing")
+    analyze_parser.add_argument("--workers", type=int, default=2, help="Number of parallel workers (default: 2)")
+    analyze_parser.set_defaults(func=cmd_analyze_raw)
     
-    # update-scores
-    subparsers.add_parser("update-scores", help="Пересчёт метрик и hook_score")
+    # Команда classify-hooks
+    classify_parser = subparsers.add_parser("classify-hooks", help="Classify hooks via LLM for pending reels")
+    classify_parser.add_argument("--parallel", action="store_true", help="Use parallel processing")
+    classify_parser.add_argument("--workers", type=int, default=4, help="Number of parallel workers (default: 4)")
+    classify_parser.set_defaults(func=cmd_classify_hooks)
+    
+    # Команда update-scores
+    scores_parser = subparsers.add_parser("update-scores", help="Update engagement rates and hook scores")
+    scores_parser.set_defaults(func=cmd_update_scores)
+    
+    # Команда check-progress
+    progress_parser = subparsers.add_parser("check-progress", help="Check download progress")
+    progress_parser.set_defaults(func=lambda args: print_download_progress())
     
     args = parser.parse_args()
     
@@ -207,22 +137,7 @@ def main():
         parser.print_help()
         sys.exit(1)
     
-    # Проверяем переменные окружения
-    if not os.getenv("SUPABASE_URL") or not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
-        logger.error("SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY должны быть установлены")
-        sys.exit(1)
-    
-    # Выполняем команду
-    if args.command == "ingest":
-        cmd_ingest(args)
-    elif args.command == "download-videos":
-        cmd_download_videos(args)
-    elif args.command == "analyze-raw":
-        cmd_analyze_raw(args)
-    elif args.command == "classify-hooks":
-        cmd_classify_hooks(args)
-    elif args.command == "update-scores":
-        cmd_update_scores(args)
+    args.func(args)
 
 
 if __name__ == "__main__":

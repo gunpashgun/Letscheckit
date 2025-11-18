@@ -1,17 +1,18 @@
-"""Pydantic models for Apify JSON reel data."""
+"""Pydantic models for Apify Instagram Reel JSON."""
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, HttpUrl, Field
 
 
 class MusicInfo(BaseModel):
+    """Music information from Apify."""
     artist_name: Optional[str] = None
     song_name: Optional[str] = None
     audio_id: Optional[str] = None
 
 
 class ApifyReel(BaseModel):
-    """Model for a single reel from Apify JSON."""
+    """Main model for Instagram reel from Apify."""
     id: str
     type: Optional[str] = None
     shortCode: str
@@ -30,15 +31,16 @@ class ApifyReel(BaseModel):
     ownerId: str
     productType: Optional[str] = None
     videoDuration: float
-    inputUrl: Optional[HttpUrl] = None
-    displayUrl: Optional[HttpUrl] = None
-    images: Optional[List[str]] = Field(default_factory=list)
+    inputUrl: Optional[str] = None
+    displayUrl: Optional[str] = None
+    images: List[str] = Field(default_factory=list)
     firstComment: Optional[str] = None
-    latestComments: Optional[List[str]] = Field(default_factory=list)
-    taggedUsers: Optional[List[str]] = Field(default_factory=list)
+    latestComments: List[str] = Field(default_factory=list)
+    taggedUsers: List[str] = Field(default_factory=list)
     musicInfo: Optional[MusicInfo] = None
     
     class Config:
+        """Pydantic config."""
         json_encoders = {
             datetime: lambda v: v.isoformat(),
             HttpUrl: str,

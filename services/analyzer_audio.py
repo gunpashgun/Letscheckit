@@ -1,62 +1,48 @@
 """Audio analysis service using Whisper."""
-import logging
-from pathlib import Path
-from uuid import UUID
 import tempfile
-
+import os
+from uuid import UUID
+from pathlib import Path
 from faster_whisper import WhisperModel
 from supabase import Client
+
 from services.supabase_client import get_supabase_client
 
-logger = logging.getLogger(__name__)
 
-# Модель Whisper (можно изменить на large-v2 для лучшего качества)
-WHISPER_MODEL = "medium"
-
-
-def extract_audio_segment(video_path: Path, output_path: Path, start: float = 0.0, duration: float = 4.0) -> None:
-    """Вырезает сегмент аудио из видео используя ffmpeg через subprocess."""
-    import subprocess
-    
-    cmd = [
-        "ffmpeg",
-        "-i", str(video_path),
-        "-ss", str(start),
-        "-t", str(duration),
-        "-vn",  # без видео
-        "-acodec", "pcm_s16le",  # PCM 16-bit
-        "-ar", "16000",  # sample rate для Whisper
-        "-ac", "1",  # моно
-        "-y",  # перезаписать выходной файл
-        str(output_path)
-    ]
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg error: {result.stderr}")
-
-
-def transcribe_audio(audio_path: Path, language: str = "id") -> str:
+def extract_audio_text(video_path: str, duration_seconds: int = 4, language: str = "id") -> str:
     """
-    Транскрибирует аудио через faster-whisper.
-    Возвращает текст первых N секунд.
-    """
-    model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    Извлекает текст из первых N секунд аудио видео через Whisper.
     
+    Args:
+        video_path: путь к видеофайлу
+        duration_seconds: сколько секунд обрабатывать
+        language: приоритетный язык (id для индонезийского)
+    
+    Returns:
+        Транскрибированный текст
+    """
+    model = WhisperModel("medium", device="cpu", compute_type="int8")
+    
+    # Извлекаем первые N секунд
     segments, info = model.transcribe(
-        str(audio_path),
+        video_path,
         language=language,
+        task="transcribe",
         beam_size=5,
         vad_filter=True,
     )
     
-    # Собираем текст из сегментов
+    # Собираем текст из сегментов, ограничивая по времени
     text_parts = []
+    current_time = 0.0
+    
     for segment in segments:
-        text_parts.append(segment.text.strip())
+        if current_time >= duration_seconds:
+            break
+        if segment.text.strip():
+            text_parts.append(segment.text.strip())
+        current_time = segment.end
     
-    full_text = " ".join(text_parts)
-    logger.info(f"Транскрипция завершена, язык: {info.language}, текст: {full_text[:100]}...")
-    
-    return full_text
+    result = " ".join(text_parts).strip()
+    return result if result else ""
 
