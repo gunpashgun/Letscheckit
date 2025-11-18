@@ -6,7 +6,7 @@
  * 2. Supabase Batch - массовый анализ из Supabase БД
  */
 
-import { Actor } from 'apify';
+import { Actor, log } from 'apify';
 import { createClient } from '@supabase/supabase-js';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
@@ -34,7 +34,7 @@ await Actor.main(async () => {
         throw new Error('OpenRouter API key is required!');
     }
     
-    Actor.log.info(`Режим работы: ${mode}`);
+    log.info(`Режим работы: ${mode}`);
     
     if (mode === 'supabase_batch') {
         await processBatchFromSupabase(input, apiKey);
@@ -61,11 +61,11 @@ async function processBatchFromSupabase(input, apiKey) {
         throw new Error('supabase_url and supabase_key are required for batch mode!');
     }
     
-    Actor.log.info('Подключение к Supabase...');
+    log.info('Подключение к Supabase...');
     const supabase = createClient(supabase_url, supabase_key);
     
     // Получаем список reels для обработки
-    Actor.log.info(`Получение списка reels (limit: ${batch_limit}, unanalyzed_only: ${filter_unanalyzed_only})...`);
+    log.info(`Получение списка reels (limit: ${batch_limit}, unanalyzed_only: ${filter_unanalyzed_only})...`);
     
     let query = supabase
         .from('reels')
@@ -93,16 +93,16 @@ async function processBatchFromSupabase(input, apiKey) {
     }
     
     if (!reels || reels.length === 0) {
-        Actor.log.info('Нет reels для обработки');
+        log.info('Нет reels для обработки');
         return;
     }
     
-    Actor.log.info(`Найдено ${reels.length} reels для анализа`);
+    log.info(`Найдено ${reels.length} reels для анализа`);
     
     // Обрабатываем каждый reel
     for (let i = 0; i < reels.length; i++) {
         const reel = reels[i];
-        Actor.log.info(`\n[${i + 1}/${reels.length}] Обработка reel: ${reel.id}`);
+        log.info(`\n[${i + 1}/${reels.length}] Обработка reel: ${reel.id}`);
         
         try {
             // Формируем video_url
@@ -123,15 +123,15 @@ async function processBatchFromSupabase(input, apiKey) {
             // Сохраняем результаты в Supabase
             await saveResultsToSupabase(supabase, reel.id, result);
             
-            Actor.log.info(`✅ Reel ${reel.id} обработан успешно`);
+            log.info(`✅ Reel ${reel.id} обработан успешно`);
             
         } catch (error) {
-            Actor.log.error(`❌ Ошибка обработки reel ${reel.id}: ${error.message}`);
+            log.error(`❌ Ошибка обработки reel ${reel.id}: ${error.message}`);
             // Продолжаем обработку следующих
         }
     }
     
-    Actor.log.info(`\n🎉 Batch обработка завершена: ${reels.length} reels`);
+    log.info(`\n🎉 Batch обработка завершена: ${reels.length} reels`);
 }
 
 /**
@@ -152,8 +152,8 @@ async function processSingleReel(input, apiKey) {
         throw new Error('reel_id and video_url are required for single mode!');
     }
     
-    Actor.log.info(`Анализ рилса: ${reel_id}`);
-    Actor.log.info(`Video URL: ${video_url}`);
+    log.info(`Анализ рилса: ${reel_id}`);
+    log.info(`Video URL: ${video_url}`);
     
     const result = await analyzeReel({
         reel_id,
@@ -167,7 +167,7 @@ async function processSingleReel(input, apiKey) {
     // Сохраняем в Apify Dataset
     await Actor.pushData(result);
     
-    Actor.log.info('✅ Анализ завершён успешно!');
+    log.info('✅ Анализ завершён успешно!');
 }
 
 /**
@@ -177,27 +177,27 @@ async function analyzeReel(params, apiKey) {
     const { reel_id, video_url, caption, hashtags, analysis_window_seconds, ocr_times } = params;
     
     // 1. Скачиваем видео
-    Actor.log.info('Скачивание видео...');
+    log.info('Скачивание видео...');
     const videoPath = await downloadVideo(video_url);
     
     // 2. Извлекаем аудио
-    Actor.log.info(`Извлечение аудио (${analysis_window_seconds}s)...`);
+    log.info(`Извлечение аудио (${analysis_window_seconds}s)...`);
     const audioPath = await extractAudio(videoPath, analysis_window_seconds);
     
     // 3. ASR - распознавание речи
-    Actor.log.info('ASR анализ...');
+    log.info('ASR анализ...');
     const speechSegments = await transcribeAudio(audioPath, apiKey);
-    Actor.log.info(`Распознано ${speechSegments.length} сегментов речи`);
+    log.info(`Распознано ${speechSegments.length} сегментов речи`);
     
     // 4. OCR - текст на экране
-    Actor.log.info('OCR анализ...');
+    log.info('OCR анализ...');
     const onscreenTextSegments = await analyzeOCR(videoPath, ocr_times, apiKey);
-    Actor.log.info(`Извлечено ${onscreenTextSegments.length} текстовых сегментов`);
+    log.info(`Извлечено ${onscreenTextSegments.length} текстовых сегментов`);
     
     // 5. Visual Events
-    Actor.log.info('Анализ визуальных событий...');
+    log.info('Анализ визуальных событий...');
     const visualEvents = await analyzeVisualEvents(videoPath, ocr_times, apiKey);
-    Actor.log.info(`Обнаружено ${visualEvents.length} визуальных событий`);
+    log.info(`Обнаружено ${visualEvents.length} визуальных событий`);
     
     // Очистка
     cleanupFiles([videoPath, audioPath]);
@@ -258,12 +258,12 @@ async function saveResultsToSupabase(supabase, reel_id, results) {
             .from('reel_analysis_raw')
             .update(record)
             .eq('reel_id', reel_id);
-        Actor.log.info('Результаты обновлены в Supabase');
+        log.info('Результаты обновлены в Supabase');
     } else {
         await supabase
             .from('reel_analysis_raw')
             .insert(record);
-        Actor.log.info('Результаты сохранены в Supabase');
+        log.info('Результаты сохранены в Supabase');
     }
 }
 
@@ -393,7 +393,7 @@ async function analyzeOCR(videoPath, times, apiKey) {
                 }
             }
         } catch (error) {
-            Actor.log.warning(`OCR error at ${time}s: ${error.message}`);
+            log.warning(`OCR error at ${time}s: ${error.message}`);
         }
     }
     
@@ -411,7 +411,7 @@ async function analyzeVisualEvents(videoPath, times, apiKey) {
             const frameBase64 = await extractFrameAsBase64(videoPath, time);
             frames.push({ time, base64: frameBase64 });
         } catch (error) {
-            Actor.log.warning(`Frame error at ${time}s: ${error.message}`);
+            log.warning(`Frame error at ${time}s: ${error.message}`);
         }
     }
     
@@ -503,7 +503,7 @@ function cleanupFiles(files) {
                 fs.unlinkSync(file);
             }
         } catch (error) {
-            Actor.log.warning(`Cleanup error: ${error.message}`);
+            log.warning(`Cleanup error: ${error.message}`);
         }
     }
 }
