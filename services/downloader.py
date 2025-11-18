@@ -57,8 +57,8 @@ def download_and_store_reel_video(reel_id: UUID) -> None:
     
     logger.info(f"Скачивание видео для reel {reel_id} из {video_url}")
     
-    # Скачиваем видео стримом (следовать за редиректами)
-    with httpx.Client(headers=DOWNLOAD_HEADERS, timeout=60.0, follow_redirects=True) as client:
+    # Скачиваем видео стримом
+    with httpx.Client(headers=DOWNLOAD_HEADERS, timeout=60.0) as client:
         with client.stream("GET", video_url) as response:
             response.raise_for_status()
             

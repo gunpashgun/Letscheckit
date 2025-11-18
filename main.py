@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from services.ingestion import ingest_apify_json
 from services.downloader import download_and_store_reel_video
 from services.analyzer_raw import analyze_reel_raw
-from services.analyzer_hooks_detailed import analyze_hooks_and_brands
+from services.analyzer_hooks import classify_hook_with_llm
 from services.scoring import update_reel_scores
 from services.supabase_client import get_supabase_client
 
@@ -114,14 +114,14 @@ def cmd_analyze_raw(args):
 
 
 def cmd_classify_hooks(args):
-    """Команда: classify-hooks - детальный анализ хуков и брендов через LLM"""
+    """Команда: classify-hooks"""
     supabase = get_supabase_client()
     
-    # Получаем все reels с analysis_context, но без hooks
-    result = supabase.table("reel_analysis_raw").select("reel_id").not_.is_("analysis_context", "null").execute()
+    # Получаем все reels с raw анализом, но без hooks
+    result = supabase.table("reel_analysis_raw").select("reel_id").execute()
     
     if not result.data:
-        logger.info("Нет рилсов с analysis_context")
+        logger.info("Нет рилсов с raw анализом")
         return
     
     all_reel_ids = [UUID(item["reel_id"]) for item in result.data]
@@ -136,18 +136,18 @@ def cmd_classify_hooks(args):
         logger.info("Все рилсы уже классифицированы")
         return
     
-    logger.info(f"Найдено {len(reel_ids)} рилсов для детального анализа хуков и брендов")
+    logger.info(f"Найдено {len(reel_ids)} рилсов для классификации")
     
     success_count = 0
     error_count = 0
     
     for reel_id in reel_ids:
         try:
-            logger.info(f"Детальный анализ хуков и брендов для reel {reel_id}")
-            analyze_hooks_and_brands(reel_id)
+            logger.info(f"Классификация хука для reel {reel_id}")
+            classify_hook_with_llm(reel_id)
             success_count += 1
         except Exception as e:
-            logger.error(f"Ошибка анализа reel {reel_id}: {e}", exc_info=True)
+            logger.error(f"Ошибка классификации reel {reel_id}: {e}", exc_info=True)
             error_count += 1
     
     logger.info(f"Завершено: успешно {success_count}, ошибок {error_count}")
