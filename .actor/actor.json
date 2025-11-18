@@ -1,0 +1,15 @@
+{
+  "actorSpecification": 1,
+  "name": "instagram-reel-analyzer",
+  "title": "Instagram Reel Analyzer",
+  "description": "Analyzes Instagram Reels: ASR (speech), OCR (on-screen text), Visual Events using OpenRouter API",
+  "version": "1.0.0",
+  "meta": {
+    "templateId": "js-start"
+  },
+  "input": "./INPUT_SCHEMA.json",
+  "dockerfile": "./Dockerfile",
+  "readme": "./README.md",
+  "categories": ["AI", "VIDEO"]
+}
+

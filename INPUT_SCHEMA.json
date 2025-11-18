@@ -1,0 +1,87 @@
+{
+  "title": "Instagram Reel Analyzer Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "reel_id": {
+      "title": "Reel ID",
+      "type": "string",
+      "description": "Unique identifier for the reel in your database",
+      "editor": "textfield"
+    },
+    "video_url": {
+      "title": "Video URL",
+      "type": "string",
+      "description": "Direct URL to the video file (from Supabase Storage or Instagram CDN)",
+      "editor": "textfield"
+    },
+    "reel_url": {
+      "title": "Instagram Reel URL",
+      "type": "string",
+      "description": "Original Instagram reel URL (optional)",
+      "editor": "textfield"
+    },
+    "shortcode": {
+      "title": "Shortcode",
+      "type": "string",
+      "description": "Instagram shortcode (optional)",
+      "editor": "textfield"
+    },
+    "caption": {
+      "title": "Caption",
+      "type": "string",
+      "description": "Reel caption text",
+      "editor": "textarea"
+    },
+    "hashtags": {
+      "title": "Hashtags",
+      "type": "array",
+      "description": "Array of hashtags",
+      "editor": "json",
+      "default": []
+    },
+    "analysis_window_seconds": {
+      "title": "Analysis Window (seconds)",
+      "type": "integer",
+      "description": "How many seconds of video to analyze (default: 5)",
+      "editor": "number",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 30
+    },
+    "ocr_times": {
+      "title": "OCR Times",
+      "type": "array",
+      "description": "Timestamps (in seconds) for OCR analysis",
+      "editor": "json",
+      "default": [0.2, 1.0, 2.0, 3.0, 4.0]
+    },
+    "likes_count": {
+      "title": "Likes Count",
+      "type": "integer",
+      "description": "Number of likes (optional)",
+      "editor": "number"
+    },
+    "comments_count": {
+      "title": "Comments Count",
+      "type": "integer",
+      "description": "Number of comments (optional)",
+      "editor": "number"
+    },
+    "video_duration_seconds": {
+      "title": "Video Duration",
+      "type": "number",
+      "description": "Total video duration in seconds (optional)",
+      "editor": "number"
+    },
+    "openrouter_api_key": {
+      "title": "OpenRouter API Key",
+      "type": "string",
+      "description": "OpenRouter API key (or use OPENROUTER_API_KEY environment variable)",
+      "editor": "textfield",
+      "isSecret": true
+    }
+  },
+  "required": ["reel_id", "video_url"]
+}
+

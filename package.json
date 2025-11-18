@@ -1,0 +1,21 @@
+{
+  "name": "instagram-reel-analyzer",
+  "version": "1.0.0",
+  "description": "Анализ Instagram Reels: ASR, OCR, Visual Events через OpenRouter API",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "apify": "^3.0.0",
+    "node-fetch": "^3.3.0",
+    "form-data": "^4.0.0"
+  },
+  "author": "Your Name",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
