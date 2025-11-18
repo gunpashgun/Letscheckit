@@ -109,9 +109,18 @@ async function processBatchFromSupabase(input, apiKey) {
         
         try {
             // Формируем video_url
-            const video_url = reel.storage_video_path
-                ? `${supabase_url}/storage/v1/object/public/reels/${reel.storage_video_path}`
-                : reel.source_video_url;
+            // Приоритет: Storage (более стабильный) → source_video_url (может истечь)
+            let video_url;
+            if (reel.storage_video_path) {
+                video_url = `${supabase_url}/storage/v1/object/public/reels/${reel.storage_video_path}`;
+                log.info(`Используем Storage URL`);
+            } else if (reel.source_video_url) {
+                video_url = reel.source_video_url;
+                log.info(`Используем source URL (Storage отсутствует)`);
+            } else {
+                log.warning(`Reel ${reel.id} не имеет video_url, пропускаем`);
+                continue;
+            }
             
             // Анализируем
             const result = await analyzeReel({
@@ -526,91 +535,4 @@ function cleanupFiles(files) {
             log.warning(`Cleanup error: ${error.message}`);
         }
     }
-}
-
-/**
- * Сохраняет результаты в Google Sheets (улучшенная версия)
- */
-async function saveToGoogleSheets(input, reel, result) {
-    const { google_sheets_id, google_service_account_json } = input;
-    
-    // Получаем credentials
-    let credentials;
-    if (google_service_account_json) {
-        credentials = JSON.parse(google_service_account_json);
-    } else if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-        credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-    } else {
-        throw new Error('Google Service Account credentials not found');
-    }
-    
-    // Авторизация
-    const auth = new google.auth.GoogleAuth({
-        credentials,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-    
-    const sheets = google.sheets({ version: 'v4', auth });
-    
-    // Формируем строку данных
-    const timestamp = new Date().toLocaleString('ru-RU');
-    const reelUrl = reel.url || `https://www.instagram.com/reel/${reel.id}/`;
-    
-    // Speech text (первые 200 символов)
-    const speechText = result.speech_segments
-        .map(s => s.text)
-        .join(' ')
-        .slice(0, 200);
-    
-    // OCR text (первые 200 символов)
-    const ocrText = result.onscreen_text_segments
-        .map(s => s.text)
-        .join(' | ')
-        .slice(0, 200);
-    
-    // Visual events (через запятую)
-    const visualEvents = result.visual_events
-        .map(e => `${e.time}s:${e.event}`)
-        .join(', ')
-        .slice(0, 200);
-    
-    // Статистика
-    const likesCount = reel.likes_count || 0;
-    const commentsCount = reel.comments_count || 0;
-    const viewsCount = reel.video_view_count || reel.video_play_count || 0;
-    
-    // Бренды (будут заполнены после Python анализа)
-    const brandsDetected = 'Pending Python analysis';
-    const isAd = 'Pending Python analysis';
-    
-    const row = [
-        timestamp,                          // A: Дата/время
-        reelUrl,                           // B: URL рилса
-        reel.id,                           // C: ID
-        result.metadata.caption || '',     // D: Caption
-        likesCount,                        // E: Лайки
-        commentsCount,                     // F: Комментарии
-        viewsCount,                        // G: Просмотры
-        result.speech_segments.length,     // H: Кол-во речевых сегментов
-        speechText,                        // I: Текст речи
-        result.onscreen_text_segments.length, // J: Кол-во текста на экране
-        ocrText,                           // K: Текст с экрана
-        result.visual_events.length,       // L: Кол-во визуальных событий
-        visualEvents,                      // M: Визуальные события
-        brandsDetected,                    // N: Обнаруженные бренды
-        isAd,                             // O: Была реклама (True/False)
-        'Supabase: reel_analysis_raw'      // P: Статус
-    ];
-    
-    // Добавляем строку в таблицу
-    await sheets.spreadsheets.values.append({
-        spreadsheetId: google_sheets_id,
-        range: 'Sheet1!A:P',
-        valueInputOption: 'RAW',
-        resource: {
-            values: [row]
-        }
-    });
-    
-    log.info(`📊 Результаты добавлены в Google Sheets (+ статистика)`);
 }
