@@ -292,16 +292,19 @@ async function saveResultsToSupabase(supabase, reel_id, results) {
  * Сохраняет результаты в Google Sheets
  */
 async function saveToGoogleSheets(input, reel, results) {
-    if (!input.google_service_account_json) {
+    // Получаем credentials из input или Environment variables
+    const google_service_account_json = input.google_service_account_json || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    
+    if (!google_service_account_json) {
         throw new Error('google_service_account_json is required for Google Sheets integration');
     }
     
     // Парсим Service Account JSON
     let credentials;
     try {
-        credentials = typeof input.google_service_account_json === 'string'
-            ? JSON.parse(input.google_service_account_json)
-            : input.google_service_account_json;
+        credentials = typeof google_service_account_json === 'string'
+            ? JSON.parse(google_service_account_json)
+            : google_service_account_json;
     } catch (error) {
         throw new Error('Invalid google_service_account_json format');
     }
@@ -588,3 +591,4 @@ function cleanupFiles(files) {
         }
     }
 }
+
