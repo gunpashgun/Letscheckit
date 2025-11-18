@@ -1,10 +1,8 @@
 # Используем официальный Node.js образ с ffmpeg
 FROM apify/actor-node:18
 
-# Устанавливаем ffmpeg для обработки видео
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# Устанавливаем ffmpeg для обработки видео (Alpine Linux использует apk)
+RUN apk add --no-cache ffmpeg
 
 # Копируем package files
 COPY package*.json ./
