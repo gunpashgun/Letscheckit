@@ -3,42 +3,68 @@
   "type": "object",
   "schemaVersion": 1,
   "properties": {
-    "reel_id": {
-      "title": "Reel ID",
+    "mode": {
+      "title": "Processing Mode",
       "type": "string",
-      "description": "Unique identifier for the reel in your database",
+      "description": "Choose how to provide reels for analysis",
+      "editor": "select",
+      "enum": ["single", "supabase_batch"],
+      "enumTitles": ["Single Reel", "Batch from Supabase"],
+      "default": "single"
+    },
+    "reel_id": {
+      "title": "Reel ID (Single Mode)",
+      "type": "string",
+      "description": "Required for Single Mode: Unique identifier for the reel",
       "editor": "textfield"
     },
     "video_url": {
-      "title": "Video URL",
+      "title": "Video URL (Single Mode)",
       "type": "string",
-      "description": "Direct URL to the video file (from Supabase Storage or Instagram CDN)",
-      "editor": "textfield"
-    },
-    "reel_url": {
-      "title": "Instagram Reel URL",
-      "type": "string",
-      "description": "Original Instagram reel URL (optional)",
-      "editor": "textfield"
-    },
-    "shortcode": {
-      "title": "Shortcode",
-      "type": "string",
-      "description": "Instagram shortcode (optional)",
+      "description": "Required for Single Mode: Direct URL to the video file",
       "editor": "textfield"
     },
     "caption": {
       "title": "Caption",
       "type": "string",
-      "description": "Reel caption text",
+      "description": "Reel caption text (optional for Single Mode)",
       "editor": "textarea"
     },
     "hashtags": {
       "title": "Hashtags",
       "type": "array",
-      "description": "Array of hashtags",
+      "description": "Array of hashtags (optional for Single Mode)",
       "editor": "json",
       "default": []
+    },
+    "supabase_url": {
+      "title": "Supabase URL (Batch Mode)",
+      "type": "string",
+      "description": "Required for Batch Mode: Your Supabase project URL",
+      "editor": "textfield"
+    },
+    "supabase_key": {
+      "title": "Supabase Service Role Key (Batch Mode)",
+      "type": "string",
+      "description": "Required for Batch Mode: Your Supabase service role key",
+      "editor": "textfield",
+      "isSecret": true
+    },
+    "batch_limit": {
+      "title": "Batch Limit",
+      "type": "integer",
+      "description": "Max number of reels to process in batch mode (default: 10)",
+      "editor": "number",
+      "default": 10,
+      "minimum": 1,
+      "maximum": 100
+    },
+    "filter_unanalyzed_only": {
+      "title": "Only Unanalyzed Reels",
+      "type": "boolean",
+      "description": "In Batch Mode: only process reels without existing analysis",
+      "editor": "checkbox",
+      "default": true
     },
     "analysis_window_seconds": {
       "title": "Analysis Window (seconds)",
@@ -56,24 +82,6 @@
       "editor": "json",
       "default": [0.2, 1.0, 2.0, 3.0, 4.0]
     },
-    "likes_count": {
-      "title": "Likes Count",
-      "type": "integer",
-      "description": "Number of likes (optional)",
-      "editor": "number"
-    },
-    "comments_count": {
-      "title": "Comments Count",
-      "type": "integer",
-      "description": "Number of comments (optional)",
-      "editor": "number"
-    },
-    "video_duration_seconds": {
-      "title": "Video Duration",
-      "type": "number",
-      "description": "Total video duration in seconds (optional)",
-      "editor": "number"
-    },
     "openrouter_api_key": {
       "title": "OpenRouter API Key",
       "type": "string",
@@ -82,6 +90,5 @@
       "isSecret": true
     }
   },
-  "required": ["reel_id", "video_url"]
+  "required": []
 }
-
