@@ -89,11 +89,19 @@
       "editor": "textfield",
       "isSecret": true
     },
-    "google_doc_id": {
-      "title": "Google Doc ID (optional)",
+    "google_sheets_id": {
+      "title": "Google Sheets ID (optional)",
       "type": "string",
-      "description": "Optional: Google Doc ID to save summary. Leave empty to skip.",
-      "editor": "textfield"
+      "description": "Optional: Google Sheets ID to save results. Leave empty to skip.",
+      "editor": "textfield",
+      "default": "1J0PBI0vTFOhaISOUDo1KbwxqpwlY6Fmq0L_-jw_wIeQ"
+    },
+    "google_service_account_json": {
+      "title": "Google Service Account JSON (optional)",
+      "type": "string",
+      "description": "Optional: Google Service Account credentials as JSON string",
+      "editor": "textarea",
+      "isSecret": true
     }
   },
   "required": []

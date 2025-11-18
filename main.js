@@ -8,6 +8,7 @@
 
 import { Actor, log } from 'apify';
 import { createClient } from '@supabase/supabase-js';
+import { google } from 'googleapis';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
 import fs from 'fs';
@@ -122,6 +123,15 @@ async function processBatchFromSupabase(input, apiKey) {
             
             // Сохраняем результаты в Supabase
             await saveResultsToSupabase(supabase, reel.id, result);
+            
+            // Сохраняем в Google Sheets (если настроено)
+            if (input.google_sheets_id) {
+                try {
+                    await saveToGoogleSheets(input, reel, result);
+                } catch (error) {
+                    log.warning(`Не удалось сохранить в Google Sheets: ${error.message}`);
+                }
+            }
             
             log.info(`✅ Reel ${reel.id} обработан успешно`);
             
@@ -517,86 +527,74 @@ function cleanupFiles(files) {
 }
 
 /**
- * Генерирует красивую сводку для копирования в Google Docs
+ * Сохраняет результаты в Google Sheets
  */
-async function generateSummary(supabase, reels) {
-    const lines = [];
+async function saveToGoogleSheets(input, reel, result) {
+    const { google_sheets_id, google_service_account_json } = input;
     
-    lines.push('═══════════════════════════════════════════════════════');
-    lines.push('📊 INSTAGRAM REELS ANALYSIS - BATCH SUMMARY');
-    lines.push('═══════════════════════════════════════════════════════');
-    lines.push('');
-    lines.push(`📅 Дата анализа: ${new Date().toLocaleString('ru-RU')}`);
-    lines.push(`📦 Обработано роликов: ${reels.length}`);
-    lines.push('');
-    lines.push('───────────────────────────────────────────────────────');
-    lines.push('');
-    
-    for (let i = 0; i < reels.length; i++) {
-        const reel = reels[i];
-        
-        lines.push(`${i + 1}. REEL: ${reel.id}`);
-        lines.push(`   URL: ${reel.url || 'N/A'}`);
-        lines.push('');
-        
-        // Получаем анализ из БД
-        const { data: analysis } = await supabase
-            .from('reel_analysis_raw')
-            .select('*')
-            .eq('reel_id', reel.id)
-            .single();
-        
-        if (analysis) {
-            lines.push('   📝 РЕЧЬ (ASR):');
-            if (analysis.speech_segments && analysis.speech_segments.length > 0) {
-                for (const seg of analysis.speech_segments.slice(0, 3)) {
-                    lines.push(`      [${seg.start}s - ${seg.end}s] ${seg.text}`);
-                }
-                if (analysis.speech_segments.length > 3) {
-                    lines.push(`      ... ещё ${analysis.speech_segments.length - 3} сегментов`);
-                }
-            } else {
-                lines.push('      Нет данных');
-            }
-            lines.push('');
-            
-            lines.push('   🔤 ТЕКСТ НА ЭКРАНЕ (OCR):');
-            if (analysis.onscreen_text_segments && analysis.onscreen_text_segments.length > 0) {
-                for (const seg of analysis.onscreen_text_segments.slice(0, 3)) {
-                    lines.push(`      [${seg.time}s] ${seg.text}`);
-                }
-                if (analysis.onscreen_text_segments.length > 3) {
-                    lines.push(`      ... ещё ${analysis.onscreen_text_segments.length - 3} сегментов`);
-                }
-            } else {
-                lines.push('      Нет данных');
-            }
-            lines.push('');
-            
-            lines.push('   👁️  ВИЗУАЛЬНЫЕ СОБЫТИЯ:');
-            if (analysis.visual_events && analysis.visual_events.length > 0) {
-                for (const event of analysis.visual_events) {
-                    lines.push(`      [${event.time}s] ${event.event}`);
-                }
-            } else {
-                lines.push('      Нет данных');
-            }
-            lines.push('');
-        }
-        
-        lines.push('───────────────────────────────────────────────────────');
-        lines.push('');
+    // Получаем credentials
+    let credentials;
+    if (google_service_account_json) {
+        credentials = JSON.parse(google_service_account_json);
+    } else if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    } else {
+        throw new Error('Google Service Account credentials not found');
     }
     
-    lines.push('');
-    lines.push('✅ Все результаты сохранены в Supabase (таблица: reel_analysis_raw)');
-    lines.push('');
-    lines.push('📋 Следующие шаги:');
-    lines.push('   1. python main.py classify-hooks - классификация hooks');
-    lines.push('   2. python main.py analyze-brands - анализ брендов');
-    lines.push('   3. python main.py update-scores - обновление метрик');
-    lines.push('');
-    lines.push('═══════════════════════════════════════════════════════');
+    // Авторизация
+    const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
     
-    return lines.join('\n');
+    const sheets = google.sheets({ version: 'v4', auth });
+    
+    // Формируем строку данных
+    const timestamp = new Date().toLocaleString('ru-RU');
+    const reelUrl = reel.url || `https://www.instagram.com/reel/${reel.id}/`;
+    
+    // Speech text (первые 200 символов)
+    const speechText = result.speech_segments
+        .map(s => s.text)
+        .join(' ')
+        .slice(0, 200);
+    
+    // OCR text (первые 200 символов)
+    const ocrText = result.onscreen_text_segments
+        .map(s => s.text)
+        .join(' | ')
+        .slice(0, 200);
+    
+    // Visual events (через запятую)
+    const visualEvents = result.visual_events
+        .map(e => `${e.time}s:${e.event}`)
+        .join(', ')
+        .slice(0, 200);
+    
+    const row = [
+        timestamp,                          // A: Дата/время
+        reelUrl,                           // B: URL рилса
+        reel.id,                           // C: ID
+        result.metadata.caption || '',     // D: Caption
+        result.speech_segments.length,     // E: Кол-во речевых сегментов
+        speechText,                        // F: Текст речи
+        result.onscreen_text_segments.length, // G: Кол-во текста на экране
+        ocrText,                           // H: Текст с экрана
+        result.visual_events.length,       // I: Кол-во визуальных событий
+        visualEvents,                      // J: Визуальные события
+        'Supabase: reel_analysis_raw'      // K: Статус
+    ];
+    
+    // Добавляем строку в таблицу
+    await sheets.spreadsheets.values.append({
+        spreadsheetId: google_sheets_id,
+        range: 'Sheet1!A:K',  // Предполагаем что есть Sheet1
+        valueInputOption: 'RAW',
+        resource: {
+            values: [row]
+        }
+    });
+    
+    log.info(`📊 Результаты добавлены в Google Sheets: ${google_sheets_id}`);
 }
