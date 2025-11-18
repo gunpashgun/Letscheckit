@@ -62,3 +62,4 @@ if __name__ == "__main__":
         print("\n⚠️  Автоматическое выполнение миграции невозможно")
         print("Выполните SQL вручную в Supabase Dashboard -> SQL Editor")
 
+

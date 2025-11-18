@@ -55,3 +55,4 @@ def transcribe_audio_with_timestamps(audio_path: Path, language: str = "id") -> 
     logger.info(f"Транскрипция завершена, язык: {info.language}, сегментов: {len(speech_segments)}")
     return speech_segments
 
+

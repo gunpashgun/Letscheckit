@@ -60,3 +60,4 @@ def ocr_frame_at_times(video_path: Path, times: List[float]) -> List[Dict[str, A
     logger.info(f"OCR завершён, извлечено {len(onscreen_text_segments)} текстовых сегментов")
     return onscreen_text_segments
 
+
