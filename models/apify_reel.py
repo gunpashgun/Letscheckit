@@ -1,6 +1,6 @@
 """Pydantic models for Apify JSON reel data."""
 from datetime import datetime
-from typing import Optional, List, Any, Dict
+from typing import Optional, List
 from pydantic import BaseModel, HttpUrl, Field
 
 
@@ -34,8 +34,8 @@ class ApifyReel(BaseModel):
     displayUrl: Optional[HttpUrl] = None
     images: Optional[List[str]] = Field(default_factory=list)
     firstComment: Optional[str] = None
-    latestComments: Optional[List[Dict[str, Any]]] = Field(default_factory=list)  # массив объектов
-    taggedUsers: Optional[List[Dict[str, Any]]] = Field(default_factory=list)  # массив объектов
+    latestComments: Optional[List[str]] = Field(default_factory=list)
+    taggedUsers: Optional[List[str]] = Field(default_factory=list)
     musicInfo: Optional[MusicInfo] = None
     
     class Config:

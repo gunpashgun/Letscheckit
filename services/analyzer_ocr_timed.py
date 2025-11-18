@@ -22,31 +22,23 @@ def extract_frame_at_time(video_path: Path, time: float) -> Image.Image:
     
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
     ret, frame = cap.read()
-    
     cap.release()
     
     if not ret:
         raise RuntimeError(f"Не удалось извлечь кадр в момент {time}s")
     
-    # Конвертируем BGR в RGB для PIL
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    pil_image = Image.fromarray(frame_rgb)
-    
-    return pil_image
+    return Image.fromarray(frame_rgb)
 
 
 def ocr_frame_at_times(video_path: Path, times: List[float]) -> List[Dict[str, Any]]:
-    """
-    Извлекает кадры в указанные моменты времени и делает OCR.
-    Возвращает список {time, text}.
-    """
+    """Извлекает кадры в указанные моменты времени и делает OCR."""
     onscreen_text_segments = []
     
     for time in times:
         try:
             frame = extract_frame_at_time(video_path, time)
             
-            # Пробуем разные языки (indonesian + english)
             try:
                 text = pytesseract.image_to_string(frame, lang="ind+eng").strip()
             except:
@@ -60,13 +52,12 @@ def ocr_frame_at_times(video_path: Path, times: List[float]) -> List[Dict[str, A
                     "time": round(time, 2),
                     "text": text
                 })
-                logger.debug(f"OCR в {time}s: {text[:50]}...")
         
         except Exception as e:
             logger.warning(f"Ошибка OCR для кадра в {time}s: {e}")
             continue
     
     logger.info(f"OCR завершён, извлечено {len(onscreen_text_segments)} текстовых сегментов")
-    
     return onscreen_text_segments
+
 

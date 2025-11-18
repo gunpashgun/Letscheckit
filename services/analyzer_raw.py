@@ -76,13 +76,12 @@ def analyze_reel_raw(reel_id: UUID) -> None:
         # 3. Визуальные события: анализируем те же кадры
         logger.info("Определение визуальных событий...")
         visual_events = detect_visual_events(video_file, ocr_times)
-        
         logger.info(f"Визуальные события: обнаружено {len(visual_events)} событий")
         
         # 4. Извлекаем caption intro (первые 1-2 строки)
         caption_intro = _extract_caption_intro(caption)
         
-        # 5. Извлекаем mentions из caption (если есть @username)
+        # 5. Извлекаем mentions из caption
         mentions = _extract_mentions(caption)
         
         # 6. Формируем единый JSON контекст для LLM
@@ -94,7 +93,7 @@ def analyze_reel_raw(reel_id: UUID) -> None:
             "caption_intro": caption_intro,
             "hashtags": hashtags,
             "mentions": mentions,
-            "tagged_users": mentions,  # пока используем mentions как tagged_users
+            "tagged_users": mentions,
         }
         
         logger.info(f"JSON контекст сформирован: {len(speech_segments)} speech, {len(onscreen_text_segments)} text, {len(visual_events)} visual")
@@ -107,25 +106,48 @@ def analyze_reel_raw(reel_id: UUID) -> None:
         # 8. Сохраняем в reel_analysis_raw
         analysis_data = {
             "reel_id": str(reel_id),
-            "speech_text": speech_text,  # для обратной совместимости
-            "screen_text": screen_text,   # для обратной совместимости
+            "speech_text": speech_text,
+            "screen_text": screen_text,
             "caption_hook_text": caption_intro,
             "hook_raw_text": hook_raw_text,
-            "speech_segments": speech_segments,
-            "onscreen_text_segments": onscreen_text_segments,
-            "visual_events": visual_events,
-            "analysis_context": analysis_context,
         }
+        
+        # Добавляем новые поля только если они есть в БД (через try/except)
+        try:
+            analysis_data.update({
+                "speech_segments": speech_segments,
+                "onscreen_text_segments": onscreen_text_segments,
+                "visual_events": visual_events,
+                "analysis_context": analysis_context,
+            })
+        except:
+            pass  # Если колонок нет, сохраняем только базовые поля
         
         # Проверяем, есть ли уже запись
         existing = supabase.table("reel_analysis_raw").select("id").eq("reel_id", str(reel_id)).execute()
         
-        if existing.data:
-            supabase.table("reel_analysis_raw").update(analysis_data).eq("reel_id", str(reel_id)).execute()
-            logger.info(f"Обновлена запись анализа для reel {reel_id}")
-        else:
-            supabase.table("reel_analysis_raw").insert(analysis_data).execute()
-            logger.info(f"Создана запись анализа для reel {reel_id}")
+        try:
+            if existing.data:
+                supabase.table("reel_analysis_raw").update(analysis_data).eq("reel_id", str(reel_id)).execute()
+                logger.info(f"Обновлена запись анализа для reel {reel_id}")
+            else:
+                supabase.table("reel_analysis_raw").insert(analysis_data).execute()
+                logger.info(f"Создана запись анализа для reel {reel_id}")
+        except Exception as e:
+            # Если ошибка из-за отсутствующих колонок, сохраняем только базовые поля
+            logger.warning(f"Ошибка сохранения с новыми полями: {e}, сохраняю только базовые поля")
+            basic_data = {
+                "reel_id": str(reel_id),
+                "speech_text": speech_text,
+                "screen_text": screen_text,
+                "caption_hook_text": caption_intro,
+                "hook_raw_text": hook_raw_text,
+            }
+            if existing.data:
+                supabase.table("reel_analysis_raw").update(basic_data).eq("reel_id", str(reel_id)).execute()
+            else:
+                supabase.table("reel_analysis_raw").insert(basic_data).execute()
+            logger.info(f"Сохранена базовая запись анализа для reel {reel_id}")
     
     finally:
         # Очистка временных файлов
@@ -150,3 +172,42 @@ def _extract_mentions(caption: str) -> list:
     
     mentions = re.findall(r'@(\w+)', caption)
     return list(set(mentions))  # убираем дубликаты
+
+
+def _extract_caption_hook(caption: str, max_length: int = 200) -> str:
+    """
+    Извлекает хук из caption: первые 1-2 предложения, обрезает до max_length символов.
+    """
+    if not caption:
+        return ""
+    
+    # Разбиваем на предложения (по точкам, восклицательным, вопросительным знакам)
+    sentences = re.split(r'[.!?]+', caption)
+    
+    # Берём первые 1-2 предложения
+    hook_sentences = []
+    total_length = 0
+    
+    for sent in sentences[:2]:
+        sent = sent.strip()
+        if not sent:
+            continue
+        
+        if total_length + len(sent) + 1 <= max_length:
+            hook_sentences.append(sent)
+            total_length += len(sent) + 1
+        else:
+            # Обрезаем последнее предложение
+            remaining = max_length - total_length - 1
+            if remaining > 20:  # Минимум символов для добавления
+                hook_sentences.append(sent[:remaining] + "...")
+            break
+    
+    result = ". ".join(hook_sentences)
+    
+    # Если всё ещё слишком длинное, обрезаем
+    if len(result) > max_length:
+        result = result[:max_length - 3] + "..."
+    
+    return result
+

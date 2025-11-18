@@ -10,9 +10,18 @@ pip install -r requirements.txt
 ```
 
 2. Установите системные зависимости:
-- **opencv-python**: для извлечения кадров из видео (устанавливается через pip)
+- **ffmpeg**: для обработки видео/аудио
+- **tesseract**: для OCR (с поддержкой indonesian и english языков)
 
-Примечание: Анализ видео и текста выполняется через OpenRouter vision модели, локальные инструменты (Whisper, Tesseract) не требуются.
+На macOS:
+```bash
+brew install ffmpeg tesseract tesseract-lang
+```
+
+На Ubuntu/Debian:
+```bash
+sudo apt-get install ffmpeg tesseract-ocr tesseract-ocr-ind
+```
 
 3. Создайте файл `.env` на основе `.env.example`:
 ```bash
@@ -74,8 +83,9 @@ project/
     supabase_client.py     # Инициализация Supabase клиента
     ingestion.py           # Парсинг JSON, создание creators/reels
     downloader.py          # Скачивание видео и загрузка в Storage
-    analyzer_openrouter.py # Анализ видео кадров через OpenRouter vision модели
-    analyzer_raw.py        # Комбинированный анализ (видео + caption)
+    analyzer_audio.py      # Вырезка аудио, Whisper транскрипция
+    analyzer_ocr.py        # Извлечение кадров + OCR
+    analyzer_raw.py        # Комбинированный анализ (ASR + OCR + caption)
     analyzer_hooks.py      # OpenRouter LLM классификация хуков
     scoring.py             # Расчёт engagement_rate и hook_score
 ```
@@ -91,12 +101,7 @@ project/
 ## Примечания
 
 - Видео скачиваются стримом с ретраями при сетевых ошибках
-- Анализ видео выполняется через OpenRouter vision модели (идеальный дизайн):
-  - Извлекаются кадры из первых 5 секунд видео целиком (10 кадров через opencv)
-  - Кадры анализируются vision моделью (по умолчанию `google/gemini-2.0-flash-exp:free`)
-  - Модель извлекает текст с экрана (OCR), речь (если есть субтитры) и определяет бренды/рекламу
-  - Определяются упоминания брендов, намёки на бренды, рекламный контент
-- LLM классификация хуков использует OpenRouter API (модель настраивается в `services/analyzer_hooks.py`)
-- Vision модель для анализа видео настраивается в `services/analyzer_openrouter.py`
-- Данные о брендах сохраняются в `reel_analysis_raw`: `brand_mentions`, `is_advertisement`, `brand_names`
+- ASR использует faster-whisper (модель `medium`) с приоритетом для indonesian языка
+- OCR извлекает 2-4 кадра из первых 2-3 секунд видео
+- LLM классификация использует OpenRouter API (модель настраивается в `services/analyzer_hooks.py`)
 
