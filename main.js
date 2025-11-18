@@ -152,15 +152,7 @@ async function processBatchFromSupabase(input, apiKey) {
         }
     }
     
-    Actor.    log.info(`\n🎉 Batch обработка завершена: ${reels.length} reels`);
-    
-    // Формируем и логируем сводку
-    const summary = await generateSummary(supabase, reels);
-    log.info('\n' + summary);
-    
-    // Опционально сохраняем в Key-Value Store для дальнейшего использования
-    await Actor.setValue('BATCH_SUMMARY', summary);
-    log.info('\n✅ Сводка сохранена в Key-Value Store (ключ: BATCH_SUMMARY)');
+    log.info(`\n🎉 Batch обработка завершена: ${reels.length} reels`);
 }
 
 /**
@@ -294,6 +286,66 @@ async function saveResultsToSupabase(supabase, reel_id, results) {
             .insert(record);
         log.info('Результаты сохранены в Supabase');
     }
+}
+
+/**
+ * Сохраняет результаты в Google Sheets
+ */
+async function saveToGoogleSheets(input, reel, results) {
+    if (!input.google_service_account_json) {
+        throw new Error('google_service_account_json is required for Google Sheets integration');
+    }
+    
+    // Парсим Service Account JSON
+    let credentials;
+    try {
+        credentials = typeof input.google_service_account_json === 'string'
+            ? JSON.parse(input.google_service_account_json)
+            : input.google_service_account_json;
+    } catch (error) {
+        throw new Error('Invalid google_service_account_json format');
+    }
+    
+    // Инициализируем Google Sheets API
+    const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+    
+    const sheets = google.sheets({ version: 'v4', auth });
+    
+    // Формируем строку данных
+    const timestamp = new Date().toISOString();
+    const speech_text = results.speech_segments.map(s => s.text).join(' ').substring(0, 200);
+    const screen_text = results.onscreen_text_segments.map(s => s.text).join(' ').substring(0, 200);
+    const visual_events = results.visual_events.map(e => `${e.time}s:${e.event}`).join('; ').substring(0, 200);
+    
+    const row = [
+        timestamp,
+        reel.url || '',
+        reel.id,
+        reel.likes_count || 0,
+        reel.comments_count || 0,
+        reel.video_view_count || 0,
+        reel.video_play_count || 0,
+        speech_text,
+        screen_text,
+        visual_events,
+        'Pending Python analysis', // Brand
+        'Pending Python analysis'  // Is Ad
+    ];
+    
+    // Добавляем строку в таблицу
+    await sheets.spreadsheets.values.append({
+        spreadsheetId: input.google_sheets_id,
+        range: 'Sheet1!A:L',
+        valueInputOption: 'RAW',
+        resource: {
+            values: [row]
+        }
+    });
+    
+    log.info(`✅ Результаты сохранены в Google Sheets для reel ${reel.id}`);
 }
 
 /**
