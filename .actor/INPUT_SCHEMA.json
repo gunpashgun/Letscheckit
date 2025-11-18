@@ -8,9 +8,9 @@
       "type": "string",
       "description": "Choose how to provide reels for analysis",
       "editor": "select",
-      "enum": ["single", "supabase_batch"],
-      "enumTitles": ["Single Reel", "Batch from Supabase"],
-      "default": "single"
+      "enum": ["supabase_batch", "single"],
+      "enumTitles": ["Batch from Supabase", "Single Reel"],
+      "default": "supabase_batch"
     },
     "reel_id": {
       "title": "Reel ID (Single Mode)",
@@ -88,6 +88,12 @@
       "description": "OpenRouter API key (or use OPENROUTER_API_KEY environment variable)",
       "editor": "textfield",
       "isSecret": true
+    },
+    "google_doc_id": {
+      "title": "Google Doc ID (optional)",
+      "type": "string",
+      "description": "Optional: Google Doc ID to save summary. Leave empty to skip.",
+      "editor": "textfield"
     }
   },
   "required": []
