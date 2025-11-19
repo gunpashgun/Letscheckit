@@ -72,7 +72,7 @@ async function processBatchFromSupabase(input, apiKey) {
     
     let query = supabase
         .from('reels')
-        .select('id, source_video_url, storage_video_path, caption, hashtags, url, likes_count, comments_count, video_view_count, video_play_count, thumbnail_url')
+        .select('id, source_video_url, storage_video_path, caption, hashtags, url, likes_count, comments_count, video_view_count, video_play_count, raw_json')
         .not('storage_video_path', 'is', null)
         .limit(batch_limit);
     
@@ -525,9 +525,20 @@ async function saveToGoogleSheets(input, reel, results, apiKey) {
         hook_display = 'Format Error';
     }
     
+    // Извлекаем thumbnail из raw_json
+    let thumbnail_url = '';
+    try {
+        if (reel.raw_json) {
+            const raw = typeof reel.raw_json === 'string' ? JSON.parse(reel.raw_json) : reel.raw_json;
+            thumbnail_url = raw.displayUrl || (raw.images && raw.images[0]) || '';
+        }
+    } catch (e) {
+        log.warning(`Failed to parse raw_json for thumbnail: ${e.message}`);
+    }
+    
     // Формируем IMAGE формулу для превью
-    const preview_formula = reel.thumbnail_url 
-        ? `=IMAGE("${reel.thumbnail_url}", 1)` 
+    const preview_formula = thumbnail_url 
+        ? `=IMAGE("${thumbnail_url}", 1)` 
         : '';
     
     const row = [
