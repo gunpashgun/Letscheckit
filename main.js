@@ -333,19 +333,18 @@ async function saveToGoogleSheets(input, reel, results) {
         reel.video_view_count || 0, // F: Views
         reel.video_play_count || 0, // G: Plays
         caption,                   // H: Caption (Original)
-        audio_transcript,          // I: Audio Transcript (ID)
-        screen_text,               // J: Screen Text (ID)
-        '',                        // K: Caption (EN) - для ручного перевода
-        '',                        // L: Audio Transcript (EN) - для ручного перевода
-        '',                        // M: Screen Text (EN) - для ручного перевода
-        '',                        // N: Hook Type - для анализа
-        visual_events              // O: Visual Events
+        '',                        // I: Caption (EN) - для ручного перевода
+        audio_transcript,          // J: Audio Transcript (ID)
+        '',                        // K: Audio Transcript (EN) - для ручного перевода
+        screen_text,               // L: Screen Text (ID)
+        '',                        // M: Hook Type - для анализа
+        visual_events              // N: Visual Events
     ];
     
     // Добавляем строку в таблицу (используем первый лист)
     await sheets.spreadsheets.values.append({
         spreadsheetId: input.google_sheets_id,
-        range: 'A:O',  // 15 столбцов: A-O
+        range: 'A:N',  // 14 столбцов: A-N
         valueInputOption: 'RAW',
         resource: {
             values: [row]
