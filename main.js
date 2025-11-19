@@ -604,7 +604,7 @@ async function saveToGoogleSheets(input, reel, results, apiKey, thumbnail_public
     // Используем публичный URL из Supabase Storage для =IMAGE()
     // Точка с запятой ; для региональных настроек
     const preview_cell = thumbnail_public_url 
-        ? `=IMAGE("${thumbnail_public_url}"; 4; 60; 60)` 
+        ? `=IMAGE("${thumbnail_public_url}"; 4; 330; 200)` 
         : '🖼️ No image';
     
     const row = [
