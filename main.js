@@ -138,7 +138,7 @@ async function processBatchFromSupabase(input, apiKey) {
             // Сохраняем в Google Sheets (если настроено)
             if (input.google_sheets_id) {
                 try {
-                    await saveToGoogleSheets(input, reel, result);
+                    await saveToGoogleSheets(input, reel, result, apiKey);
                 } catch (error) {
                     log.warning(`Не удалось сохранить в Google Sheets: ${error.message}`);
                 }
@@ -289,9 +289,75 @@ async function saveResultsToSupabase(supabase, reel_id, results) {
 }
 
 /**
+ * Анализирует тип хука
+ */
+async function analyzeHookType(caption, audioTranscript, screenText, visualEvents, apiKey) {
+    // Формируем контекст для анализа
+    const context = `
+Caption: ${caption.substring(0, 300)}
+Audio: ${audioTranscript.substring(0, 300)}
+Screen: ${screenText.substring(0, 200)}
+Visual: ${visualEvents}
+    `.trim();
+    
+    if (!context || context.length < 10) {
+        return 'No Content';
+    }
+    
+    const prompt = `Analyze this Instagram Reel hook and classify it into ONE of these types:
+
+1. Question Hook - starts with a question
+2. Shock/Surprise Hook - surprising fact or statement
+3. Problem/Solution Hook - presents a problem
+4. How-To Hook - educational/tutorial
+5. Story Hook - tells a story
+6. List Hook - "X ways to..." or numbered list
+7. Challenge/Dare Hook - challenges viewer
+8. Behind-the-Scenes Hook - exclusive content
+9. Comparison Hook - "X vs Y"
+10. Testimonial Hook - social proof
+
+Context:
+${context}
+
+Respond with ONLY the hook type name (e.g., "Question Hook" or "Story Hook"). If unclear, respond "Mixed Hook".`;
+
+    try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'openai/gpt-4o-mini',
+                messages: [{
+                    role: 'user',
+                    content: prompt
+                }],
+                temperature: 0.1,
+                max_tokens: 50
+            })
+        });
+        
+        if (!response.ok) {
+            log.warning(`Hook analysis error: ${response.status}`);
+            return 'Analysis Failed';
+        }
+        
+        const data = await response.json();
+        const hookType = data.choices[0].message.content.trim();
+        return hookType;
+    } catch (error) {
+        log.warning(`Hook analysis exception: ${error.message}`);
+        return 'Analysis Error';
+    }
+}
+
+/**
  * Сохраняет результаты в Google Sheets
  */
-async function saveToGoogleSheets(input, reel, results) {
+async function saveToGoogleSheets(input, reel, results, apiKey) {
     // Получаем credentials из input или Environment variables
     const google_service_account_json = input.google_service_account_json || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     
@@ -324,6 +390,11 @@ async function saveToGoogleSheets(input, reel, results) {
     const screen_text = results.onscreen_text_segments.map(s => s.text).join(' '); // Полный текст с экрана
     const visual_events = results.visual_events.map(e => `${e.time}s:${e.event}`).join('; ');
     
+    // Анализируем тип хука
+    log.info('Анализ типа хука...');
+    const hook_type = await analyzeHookType(caption, audio_transcript, screen_text, visual_events, apiKey);
+    log.info(`Тип хука: ${hook_type}`);
+    
     const row = [
         timestamp,                  // A: Timestamp
         reel.url || '',            // B: URL
@@ -337,14 +408,15 @@ async function saveToGoogleSheets(input, reel, results) {
         audio_transcript,          // J: Audio Transcript (ID)
         '',                        // K: Audio Transcript (EN) - для ручного перевода
         screen_text,               // L: Screen Text (ID)
-        '',                        // M: Hook Type - для анализа
-        visual_events              // N: Visual Events
+        '',                        // M: Screen Text (ENG) - для ручного перевода
+        hook_type,                 // N: Hook Type - автоматически!
+        visual_events              // O: Visual Events
     ];
     
     // Добавляем строку в таблицу (используем первый лист)
     await sheets.spreadsheets.values.append({
         spreadsheetId: input.google_sheets_id,
-        range: 'A:N',  // 14 столбцов: A-N
+        range: 'A:O',  // 15 столбцов: A-O
         valueInputOption: 'RAW',
         resource: {
             values: [row]
