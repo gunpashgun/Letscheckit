@@ -677,6 +677,57 @@ function formatHookFallback(audioTranscript, screenText, visualEvents) {
 }
 
 /**
+ * Проверяет и создаёт заголовки в Google Sheets если их нет
+ */
+async function ensureHeaders(sheets, spreadsheetId) {
+    try {
+        // Читаем первую строку
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'A1:Q1'
+        });
+        
+        const firstRow = response.data.values ? response.data.values[0] : [];
+        
+        // Если первая строка пустая или не содержит "Timestamp", создаём заголовки
+        if (!firstRow || firstRow.length === 0 || firstRow[0] !== 'Timestamp') {
+            const headers = [
+                'Timestamp',              // A
+                'Preview',                // B
+                'URL',                    // C
+                'Reel ID',                // D
+                'Likes',                  // E
+                'Comments',               // F
+                'Views',                  // G
+                'Plays',                  // H
+                'Caption (Original)',     // I
+                'Caption (EN)',           // J
+                'Audio Transcript (ID)',  // K
+                'Audio Transcript (EN)',  // L
+                'Screen Text (ID)',       // M
+                'Screen Text (ENG)',      // N
+                'Hook Type',              // O
+                'Visual Events',          // P
+                'Brands'                  // Q
+            ];
+            
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: 'A1:Q1',
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [headers]
+                }
+            });
+            
+            log.info('✅ Заголовки созданы в Google Sheets');
+        }
+    } catch (error) {
+        log.warning(`Не удалось проверить/создать заголовки: ${error.message}`);
+    }
+}
+
+/**
  * Сохраняет результаты в Google Sheets
  */
 async function saveToGoogleSheets(input, reel, results, apiKey, thumbnail_public_url = '') {
@@ -704,6 +755,9 @@ async function saveToGoogleSheets(input, reel, results, apiKey, thumbnail_public
     });
     
     const sheets = google.sheets({ version: 'v4', auth });
+    
+    // Проверяем и создаём заголовки если нужно
+    await ensureHeaders(sheets, input.google_sheets_id);
     
     // Формируем строку данных для анализа хуков
     const timestamp = new Date().toISOString();
