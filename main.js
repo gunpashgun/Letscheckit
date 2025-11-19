@@ -72,7 +72,7 @@ async function processBatchFromSupabase(input, apiKey) {
     
     let query = supabase
         .from('reels')
-        .select('id, source_video_url, storage_video_path, caption, hashtags, url, likes_count, comments_count, video_view_count, video_play_count')
+        .select('id, source_video_url, storage_video_path, caption, hashtags, url, likes_count, comments_count, video_view_count, video_play_count, thumbnail_url')
         .not('storage_video_path', 'is', null)
         .limit(batch_limit);
     
@@ -313,31 +313,31 @@ async function analyzeHookType(caption, audioTranscript, screenText, visualEvent
         };
     }
     
-    const prompt = `Ты — ассистент, который анализирует короткие вертикальные видео (Reels/Shorts/TikTok) и помогает найти главный "hook" в первых секундах ролика.
+    const prompt = `You are an assistant that analyzes short vertical videos (Reels/Shorts/TikTok) and helps identify the main "hook" in the first seconds of the video.
 
-Определение "hook":
-- это самое цепляющее событие в первые 5 секунд видео,
-- которое должно остановить скролл и заставить зрителя продолжить смотреть,
-- это может быть фраза, вопрос, визуальный приём, жёсткое обещание, шок, юмор, оффер и т.п.
+Hook definition:
+- The most engaging moment in the first 5 seconds of the video
+- Something that should stop the scroll and make the viewer continue watching
+- Can be a phrase, question, visual technique, strong promise, shock, humor, offer, etc.
 
-Важно:
-- Hook может быть НЕ только текстом / речью.
-- Hook может быть чисто визуальным: привлекательная девушка/парень крупным планом; быстрые смены кадров; крупный текст на экране; сильная эмоция; демонстрация результата; крупный показ продукта; деньги/роскошь; необычный ракурс или действие.
+Important:
+- Hook can be NOT only text/speech
+- Hook can be purely visual: attractive person close-up; fast cuts; big text on screen; strong emotion; result demonstration; product close-up; money/luxury; unusual angle or action
 
-Входные данные:
+Input data:
 ${JSON.stringify(context, null, 2)}
 
-Твоя задача:
-1. Проанализировать ВСЕ каналы: речь, субтитры, подпись, текст на экране, визуальные события.
-2. Найти ОДИН главный хук — самый сильный и характерный.
-3. Описать его КОРОТКОЙ фразой (не длиннее 160 символов).
-4. Определить через какой канал реализован хук: VOICE, TEXT, VISUAL, MIX.
-5. Определить тип хука и силу (1-10).
+Your task:
+1. Analyze ALL channels: speech, subtitles, caption, on-screen text, visual events
+2. Find ONE main hook - the strongest and most characteristic
+3. Describe it with a SHORT phrase (max 160 characters)
+4. Determine through which channel the hook is delivered: VOICE, TEXT, VISUAL, MIX
+5. Determine hook type and strength (1-10)
 
-Верни СТРОГО один JSON-объект БЕЗ дополнительных комментариев:
+Return STRICTLY one JSON object WITHOUT additional comments:
 
 {
-  "hook_text": "строка с описанием главного хука",
+  "hook_text": "description of the main hook",
   "channel": "VOICE | TEXT | VISUAL | MIX",
   "hook_type": "QUESTION | PAIN_POINT | BIG_PROMISE | PATTERN_INTERRUPT | STORY_PERSONAL | AUTHORITY_PROOF | HOW_TO | FOMO_URGENCY | VISUAL_SEX_APPEAL | VISUAL_MONEY_STATUS | RESULT_BEFORE_AFTER | OTHER",
   "starts_with": "QUESTION | NUMBER | STATEMENT | VISUAL_ONLY",
@@ -525,29 +525,35 @@ async function saveToGoogleSheets(input, reel, results, apiKey) {
         hook_display = 'Format Error';
     }
     
+    // Формируем IMAGE формулу для превью
+    const preview_formula = reel.thumbnail_url 
+        ? `=IMAGE("${reel.thumbnail_url}", 1)` 
+        : '';
+    
     const row = [
         timestamp,                  // A: Timestamp
-        reel.url || '',            // B: URL
-        reel.id,                   // C: Reel ID
-        reel.likes_count || 0,     // D: Likes
-        reel.comments_count || 0,  // E: Comments
-        reel.video_view_count || 0, // F: Views
-        reel.video_play_count || 0, // G: Plays
-        caption,                   // H: Caption (Original)
-        '',                        // I: Caption (EN) - для ручного перевода
-        audio_transcript,          // J: Audio Transcript (ID)
-        '',                        // K: Audio Transcript (EN) - для ручного перевода
-        screen_text,               // L: Screen Text (ID)
-        '',                        // M: Screen Text (ENG) - для ручного перевода
-        hook_display,              // N: Hook Type - автоматически с деталями!
-        visual_events              // O: Visual Events
+        preview_formula,            // B: Preview (IMAGE formula)
+        reel.url || '',            // C: URL
+        reel.id,                   // D: Reel ID
+        reel.likes_count || 0,     // E: Likes
+        reel.comments_count || 0,  // F: Comments
+        reel.video_view_count || 0, // G: Views
+        reel.video_play_count || 0, // H: Plays
+        caption,                   // I: Caption (Original)
+        '',                        // J: Caption (EN) - manual translation
+        audio_transcript,          // K: Audio Transcript (ID)
+        '',                        // L: Audio Transcript (EN) - manual translation
+        screen_text,               // M: Screen Text (ID)
+        '',                        // N: Screen Text (ENG) - manual translation
+        hook_display,              // O: Hook Type - auto analyzed!
+        visual_events              // P: Visual Events
     ];
     
     // Добавляем строку в таблицу (используем первый лист)
     await sheets.spreadsheets.values.append({
         spreadsheetId: input.google_sheets_id,
-        range: 'A:O',  // 15 столбцов: A-O
-        valueInputOption: 'RAW',
+        range: 'A:P',  // 16 столбцов: A-P
+        valueInputOption: 'USER_ENTERED',  // For processing formulas like =IMAGE()
         resource: {
             values: [row]
         }
