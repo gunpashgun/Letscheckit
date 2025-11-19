@@ -338,10 +338,10 @@ async function saveToGoogleSheets(input, reel, results) {
         'Pending Python analysis'  // Is Ad
     ];
     
-    // Добавляем строку в таблицу
+    // Добавляем строку в таблицу (используем первый лист)
     await sheets.spreadsheets.values.append({
         spreadsheetId: input.google_sheets_id,
-        range: 'Sheet1!A:L',
+        range: 'A:L',
         valueInputOption: 'RAW',
         resource: {
             values: [row]
