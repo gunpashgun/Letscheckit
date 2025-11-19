@@ -365,6 +365,91 @@ async function saveResultsToSupabase(supabase, reel_id, results) {
 }
 
 /**
+ * Анализирует бренды в видео
+ */
+async function analyzeBrands(caption, audioTranscript, screenText, visualEvents, apiKey) {
+    const context = {
+        caption: caption || '',
+        audio_transcript: audioTranscript || '',
+        screen_text: screenText || '',
+        visual_events_summary: visualEvents || ''
+    };
+    
+    // Если вообще нет данных
+    if (!audioTranscript && !screenText && !caption && !visualEvents) {
+        return 'No content';
+    }
+    
+    const prompt = `Ты анализируешь короткие видео (Reels/Shorts) и помогаешь определить, рекламирует ли видео какой-то бренд или продукт.
+
+Входные данные:
+${JSON.stringify(context, null, 2)}
+
+Твоя задача:
+1. Определи, есть ли в видео упоминание или демонстрация какого-либо бренда/продукта
+2. Если да - перечисли названия брендов/продуктов через запятую
+3. Определи, является ли это рекламой (true/false)
+
+Признаки рекламы:
+- Прямое упоминание бренда/продукта в речи или тексте
+- Демонстрация логотипа или упаковки продукта
+- Призыв к покупке, скидки, промокоды
+- Партнёрские ссылки, хештеги #ad, #sponsored
+- Положительные отзывы о конкретном продукте
+
+Верни СТРОГО один JSON-объект:
+{
+  "is_ad": true/false,
+  "brands": "Brand1, Brand2" или "" если брендов нет,
+  "confidence": 0.8
+}
+
+Если не уверен - укажи низкую confidence (0.3-0.5).
+Отвечай ТОЛЬКО валидным JSON.`;
+
+    try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'anthropic/claude-3.5-sonnet',
+                messages: [{
+                    role: 'user',
+                    content: prompt
+                }],
+                temperature: 0.2,
+                max_tokens: 200,
+                response_format: { type: "json_object" }
+            })
+        });
+        
+        if (!response.ok) {
+            log.warning(`Brand analysis error: ${response.status}`);
+            return 'Analysis Error';
+        }
+        
+        const data = await response.json();
+        const brandsData = JSON.parse(data.choices[0].message.content.trim());
+        
+        // Форматируем результат для таблицы
+        if (brandsData.is_ad && brandsData.brands) {
+            return `🎯 AD: ${brandsData.brands} (conf: ${brandsData.confidence})`;
+        } else if (brandsData.is_ad) {
+            return `🎯 AD: Yes (no brand names, conf: ${brandsData.confidence})`;
+        } else {
+            return `No ad`;
+        }
+        
+    } catch (error) {
+        log.warning(`Brand analysis exception: ${error.message}`);
+        return 'Analysis Error';
+    }
+}
+
+/**
  * Анализирует хук в первые 5 секунд видео
  */
 async function analyzeHookType(caption, audioTranscript, screenText, visualEvents, apiKey) {
@@ -389,36 +474,81 @@ async function analyzeHookType(caption, audioTranscript, screenText, visualEvent
         };
     }
     
-    const prompt = `You are an assistant that analyzes short vertical videos (Reels/Shorts/TikTok) and helps identify the main "hook" in the first seconds of the video.
+    const prompt = `Ты — ассистент, который анализирует короткие вертикальные видео (Reels/Shorts/TikTok) и помогает найти главный "hook" в первых секундах ролика.
 
-Hook definition:
-- The most engaging moment in the first 5 seconds of the video
-- Something that should stop the scroll and make the viewer continue watching
-- Can be a phrase, question, visual technique, strong promise, shock, humor, offer, etc.
+Определение "hook":
+- это самое цепляющее событие в первые 5 секунд видео,
+- которое должно остановить скролл и заставить зрителя продолжить смотреть,
+- это может быть фраза, вопрос, визуальный приём, жёсткое обещание, шок, юмор, оффер и т.п.
 
-Important:
-- Hook can be NOT only text/speech
-- Hook can be purely visual: attractive person close-up; fast cuts; big text on screen; strong emotion; result demonstration; product close-up; money/luxury; unusual angle or action
+Важно:
+- Hook может быть НЕ только текстом / речью.
+- Hook может быть чисто визуальным:
+  - привлекательная девушка/парень крупным планом;
+  - быстрые смены кадров, "резкий монтаж";
+  - крупный текст/баннер на экране;
+  - кадр с сильной эмоцией (смех, крик, плач);
+  - демонстрация результата / до-после;
+  - крупный показ продукта или логотипа;
+  - сцена с деньгами, дорогими вещами, путешествиями;
+  - явное предложение скидки, акции, "только сегодня";
+  - необычный ракурс, странное действие, ломка ожиданий (pattern interrupt).
 
-Input data:
+Тебе на вход всегда приходит JSON:
 ${JSON.stringify(context, null, 2)}
 
-Your task:
-1. Analyze ALL channels: speech, subtitles, caption, on-screen text, visual events
-2. Find ONE main hook - the strongest and most characteristic
-3. Describe it with a SHORT phrase (max 160 characters)
-4. Determine through which channel the hook is delivered: VOICE, TEXT, VISUAL, MIX
-5. Determine hook type and strength (1-10)
+Твоя задача:
+1. Проанализировать ВСЕ каналы: речь, субтитры, подпись, текст на экране, визуальные события.
+2. Найти 1–2 самых сильных hook-момента в пределах первых 5 секунд:
+   - что именно происходит (словами или визуально),
+   - почему это цепляет (вопрос, боль, выгода, шок, юмор, секс-аппил, скорость, деньги, результат и т.п.).
+3. Выбрать ОДИН главный хук — самый сильный и характерный.
+4. Описать его КОРОТКОЙ фразой, которая могла бы стоять в сценарии/описании хука.
+   - Если хук словесный — используй ключевую фразу как есть или слегка переформулируй.
+   - Если хук чисто визуальный — опиши его коротко словами
+     (например: "Крупный план улыбающейся девушки, которая резко появляется в кадре"
+      или "Крупный текст 'СКИДКА 50%' на весь экран").
+5. Определить:
+   - через какой канал в основном реализован хук:
+     - VOICE (речь),
+     - TEXT (текст на экране/субтитры/подпись),
+     - VISUAL (чистая картинка без текста),
+     - MIX (комбинация нескольких).
+   - тип хука:
+     - QUESTION (вопрос к зрителю),
+     - PAIN_POINT (подсветка боли/проблемы),
+     - BIG_PROMISE (сильное обещание результата),
+     - PATTERN_INTERRUPT (ломка ожиданий, странный кадр, резкий монтаж),
+     - STORY_PERSONAL (начало личной истории),
+     - AUTHORITY_PROOF (статус, опыт, цифры, достижения),
+     - HOW_TO (обучающий заход, "сейчас покажу как..."),
+     - FOMO_URGENCY (срочность, оффер, скидка, "только сегодня"),
+     - VISUAL_SEX_APPEAL (привлекательный человек как хук),
+     - VISUAL_MONEY_STATUS (деньги, роскошь, дорогие вещи),
+     - RESULT_BEFORE_AFTER (результат, трансформация, до-после),
+     - OTHER (если ничего не подходит).
+   - чем начинается хук:
+     - QUESTION (если с вопроса),
+     - NUMBER (если с цифры, "3 способа..."),
+     - STATEMENT (обычное утверждение),
+     - VISUAL_ONLY (если текст/речь не важны).
+   - примерную силу хука по шкале от 1 до 10.
 
-Return STRICTLY one JSON object WITHOUT additional comments:
+Формат ответа:
+Верни СТРОГО один JSON-объект БЕЗ дополнительных комментариев и текста, вида:
 
 {
-  "hook_text": "description of the main hook",
+  "hook_text": "строка с описанием главного хука (не длиннее 160 символов)",
   "channel": "VOICE | TEXT | VISUAL | MIX",
   "hook_type": "QUESTION | PAIN_POINT | BIG_PROMISE | PATTERN_INTERRUPT | STORY_PERSONAL | AUTHORITY_PROOF | HOW_TO | FOMO_URGENCY | VISUAL_SEX_APPEAL | VISUAL_MONEY_STATUS | RESULT_BEFORE_AFTER | OTHER",
   "starts_with": "QUESTION | NUMBER | STATEMENT | VISUAL_ONLY",
   "strength": 7
-}`;
+}
+
+Требования:
+- Отвечай ТОЛЬКО валидным JSON.
+- Не выдумывай факты, которых нет в входных данных: опирайся на текст и visual_events.
+- Если информации слишком мало, всё равно попробуй аккуратно угадать хук и поставь более низкий strength (3–5).`;
 
     try {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -586,6 +716,10 @@ async function saveToGoogleSheets(input, reel, results, apiKey, thumbnail_public
     log.info('Анализ типа хука...');
     const hook_analysis = await analyzeHookType(caption, audio_transcript, screen_text, visual_events, apiKey);
     
+    // Анализируем бренды
+    log.info('Анализ брендов...');
+    const brands_analysis = await analyzeBrands(caption, audio_transcript, screen_text, visual_events, apiKey);
+    
     // Форматируем результат для отображения
     let hook_display = 'Analysis Error';
     try {
@@ -623,13 +757,14 @@ async function saveToGoogleSheets(input, reel, results, apiKey, thumbnail_public
         screen_text,               // M: Screen Text (ID)
         '',                        // N: Screen Text (ENG) - manual translation
         hook_display,              // O: Hook Type - auto analyzed!
-        visual_events              // P: Visual Events
+        visual_events,             // P: Visual Events
+        brands_analysis            // Q: Brands - auto analyzed!
     ];
     
     // Добавляем строку в таблицу (используем первый лист)
     await sheets.spreadsheets.values.append({
         spreadsheetId: input.google_sheets_id,
-        range: 'A:P',  // 16 столбцов: A-P
+        range: 'A:Q',  // 17 столбцов: A-Q
         valueInputOption: 'USER_ENTERED',  // For processing formulas like =IMAGE()
         resource: {
             values: [row]
