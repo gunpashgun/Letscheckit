@@ -536,14 +536,14 @@ async function saveToGoogleSheets(input, reel, results, apiKey) {
         log.warning(`Failed to parse raw_json for thumbnail: ${e.message}`);
     }
     
-    // Формируем IMAGE формулу для превью
-    const preview_formula = thumbnail_url 
-        ? `=IMAGE("${thumbnail_url}", 1)` 
-        : '';
+    // Используем HYPERLINK вместо IMAGE (Instagram блокирует =IMAGE)
+    const preview_cell = thumbnail_url 
+        ? `=HYPERLINK("${thumbnail_url}", "🖼️ Preview")` 
+        : '🖼️ No image';
     
     const row = [
         timestamp,                  // A: Timestamp
-        preview_formula,            // B: Preview (IMAGE formula)
+        preview_cell,               // B: Preview (clickable link)
         reel.url || '',            // C: URL
         reel.id,                   // D: Reel ID
         reel.likes_count || 0,     // E: Likes
