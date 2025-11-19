@@ -72,7 +72,7 @@ async function processBatchFromSupabase(input, apiKey) {
     
     let query = supabase
         .from('reels')
-        .select('id, source_video_url, storage_video_path, caption, hashtags, url, likes_count, comments_count, video_view_count, video_play_count, raw_json')
+        .select('id, source_video_url, storage_video_path, caption, hashtags, url, likes_count, comments_count, video_view_count, video_play_count, raw_json, storage_thumb_path')
         .not('storage_video_path', 'is', null)
         .limit(batch_limit);
     
@@ -135,10 +135,18 @@ async function processBatchFromSupabase(input, apiKey) {
             // Сохраняем результаты в Supabase
             await saveResultsToSupabase(supabase, reel.id, result);
             
+            // Загружаем thumbnail в Storage (если еще не загружен)
+            let thumbnail_public_url = '';
+            try {
+                thumbnail_public_url = await uploadThumbnailToStorage(supabase, supabase_url, reel);
+            } catch (error) {
+                log.warning(`Failed to upload thumbnail: ${error.message}`);
+            }
+            
             // Сохраняем в Google Sheets (если настроено)
             if (input.google_sheets_id) {
                 try {
-                    await saveToGoogleSheets(input, reel, result, apiKey);
+                    await saveToGoogleSheets(input, reel, result, apiKey, thumbnail_public_url);
                 } catch (error) {
                     log.warning(`Не удалось сохранить в Google Sheets: ${error.message}`);
                 }
@@ -235,6 +243,74 @@ async function analyzeReel(params, apiKey) {
             timestamp: new Date().toISOString()
         }
     };
+}
+
+/**
+ * Uploads thumbnail to Supabase Storage and returns public URL
+ */
+async function uploadThumbnailToStorage(supabase, supabase_url, reel) {
+    // Check if already uploaded
+    if (reel.storage_thumb_path) {
+        return `${supabase_url}/storage/v1/object/public/reels/${reel.storage_thumb_path}`;
+    }
+    
+    // Extract thumbnail URL from raw_json
+    let thumbnail_url = '';
+    try {
+        if (reel.raw_json) {
+            const raw = typeof reel.raw_json === 'string' ? JSON.parse(reel.raw_json) : reel.raw_json;
+            thumbnail_url = raw.displayUrl || (raw.images && raw.images[0]) || '';
+        }
+    } catch (e) {
+        throw new Error(`Failed to parse thumbnail URL: ${e.message}`);
+    }
+    
+    if (!thumbnail_url) {
+        throw new Error('No thumbnail URL found');
+    }
+    
+    log.info('Downloading thumbnail...');
+    
+    // Download thumbnail
+    const response = await fetch(thumbnail_url, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Failed to download thumbnail: ${response.status}`);
+    }
+    
+    const imageBuffer = await response.buffer();
+    
+    // Generate filename
+    const filename = `${reel.id}_thumb.jpg`;
+    const storage_path = `thumbs/${filename}`;
+    
+    // Upload to Supabase Storage
+    const { data, error } = await supabase
+        .storage
+        .from('reels')
+        .upload(storage_path, imageBuffer, {
+            contentType: 'image/jpeg',
+            upsert: true
+        });
+    
+    if (error) {
+        throw new Error(`Storage upload failed: ${error.message}`);
+    }
+    
+    // Update database with storage path
+    await supabase
+        .from('reels')
+        .update({ storage_thumb_path: storage_path })
+        .eq('id', reel.id);
+    
+    const public_url = `${supabase_url}/storage/v1/object/public/reels/${storage_path}`;
+    log.info(`✅ Thumbnail uploaded: ${public_url}`);
+    
+    return public_url;
 }
 
 /**
@@ -473,7 +549,7 @@ function formatHookFallback(audioTranscript, screenText, visualEvents) {
 /**
  * Сохраняет результаты в Google Sheets
  */
-async function saveToGoogleSheets(input, reel, results, apiKey) {
+async function saveToGoogleSheets(input, reel, results, apiKey, thumbnail_public_url = '') {
     // Получаем credentials из input или Environment variables
     const google_service_account_json = input.google_service_account_json || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     
@@ -525,20 +601,9 @@ async function saveToGoogleSheets(input, reel, results, apiKey) {
         hook_display = 'Format Error';
     }
     
-    // Извлекаем thumbnail из raw_json
-    let thumbnail_url = '';
-    try {
-        if (reel.raw_json) {
-            const raw = typeof reel.raw_json === 'string' ? JSON.parse(reel.raw_json) : reel.raw_json;
-            thumbnail_url = raw.displayUrl || (raw.images && raw.images[0]) || '';
-        }
-    } catch (e) {
-        log.warning(`Failed to parse raw_json for thumbnail: ${e.message}`);
-    }
-    
-    // Используем HYPERLINK вместо IMAGE (Instagram блокирует =IMAGE)
-    const preview_cell = thumbnail_url 
-        ? `=HYPERLINK("${thumbnail_url}", "🖼️ Preview")` 
+    // Используем публичный URL из Supabase Storage для =IMAGE()
+    const preview_cell = thumbnail_public_url 
+        ? `=IMAGE("${thumbnail_public_url}", 1)` 
         : '🖼️ No image';
     
     const row = [
