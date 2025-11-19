@@ -317,31 +317,35 @@ async function saveToGoogleSheets(input, reel, results) {
     
     const sheets = google.sheets({ version: 'v4', auth });
     
-    // Формируем строку данных
+    // Формируем строку данных для анализа хуков
     const timestamp = new Date().toISOString();
-    const speech_text = results.speech_segments.map(s => s.text).join(' ').substring(0, 200);
-    const screen_text = results.onscreen_text_segments.map(s => s.text).join(' ').substring(0, 200);
-    const visual_events = results.visual_events.map(e => `${e.time}s:${e.event}`).join('; ').substring(0, 200);
+    const caption = reel.caption || '';
+    const audio_transcript = results.speech_segments.map(s => s.text).join(' ');  // Полная транскрипция
+    const screen_text = results.onscreen_text_segments.map(s => s.text).join(' '); // Полный текст с экрана
+    const visual_events = results.visual_events.map(e => `${e.time}s:${e.event}`).join('; ');
     
     const row = [
-        timestamp,
-        reel.url || '',
-        reel.id,
-        reel.likes_count || 0,
-        reel.comments_count || 0,
-        reel.video_view_count || 0,
-        reel.video_play_count || 0,
-        speech_text,
-        screen_text,
-        visual_events,
-        'Pending Python analysis', // Brand
-        'Pending Python analysis'  // Is Ad
+        timestamp,                  // A: Timestamp
+        reel.url || '',            // B: URL
+        reel.id,                   // C: Reel ID
+        reel.likes_count || 0,     // D: Likes
+        reel.comments_count || 0,  // E: Comments
+        reel.video_view_count || 0, // F: Views
+        reel.video_play_count || 0, // G: Plays
+        caption,                   // H: Caption (Original)
+        audio_transcript,          // I: Audio Transcript (ID)
+        screen_text,               // J: Screen Text (ID)
+        '',                        // K: Caption (EN) - для ручного перевода
+        '',                        // L: Audio Transcript (EN) - для ручного перевода
+        '',                        // M: Screen Text (EN) - для ручного перевода
+        '',                        // N: Hook Type - для анализа
+        visual_events              // O: Visual Events
     ];
     
     // Добавляем строку в таблицу (используем первый лист)
     await sheets.spreadsheets.values.append({
         spreadsheetId: input.google_sheets_id,
-        range: 'A:L',
+        range: 'A:O',  // 15 столбцов: A-O
         valueInputOption: 'RAW',
         resource: {
             values: [row]
