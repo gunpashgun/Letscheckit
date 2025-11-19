@@ -289,38 +289,60 @@ async function saveResultsToSupabase(supabase, reel_id, results) {
 }
 
 /**
- * Анализирует тип хука
+ * Анализирует хук в первые 5 секунд видео
  */
 async function analyzeHookType(caption, audioTranscript, screenText, visualEvents, apiKey) {
-    // Формируем контекст для анализа
-    const context = `
-Caption: ${caption.substring(0, 300)}
-Audio: ${audioTranscript.substring(0, 300)}
-Screen: ${screenText.substring(0, 200)}
-Visual: ${visualEvents}
-    `.trim();
+    // Формируем структурированный контекст
+    const context = {
+        transcript_first5: audioTranscript.substring(0, 500) || "",
+        subtitles_first_lines: "",  // У нас нет субтитров отдельно
+        caption_intro: caption.split('\n').slice(0, 2).join(' ').substring(0, 300) || "",
+        ocr_text_first_frames: screenText.substring(0, 300) || "",
+        visual_events: parseVisualEvents(visualEvents),
+        language_hint: detectLanguage(caption, audioTranscript)
+    };
     
-    if (!context || context.length < 10) {
-        return 'No Content';
+    // Если вообще нет данных
+    if (!audioTranscript && !screenText && !caption && !visualEvents) {
+        return {
+            hook_text: "No content available",
+            channel: "VISUAL",
+            hook_type: "OTHER",
+            starts_with: "VISUAL_ONLY",
+            strength: 1
+        };
     }
     
-    const prompt = `Analyze this Instagram Reel hook and classify it into ONE of these types:
+    const prompt = `Ты — ассистент, который анализирует короткие вертикальные видео (Reels/Shorts/TikTok) и помогает найти главный "hook" в первых секундах ролика.
 
-1. Question Hook - starts with a question
-2. Shock/Surprise Hook - surprising fact or statement
-3. Problem/Solution Hook - presents a problem
-4. How-To Hook - educational/tutorial
-5. Story Hook - tells a story
-6. List Hook - "X ways to..." or numbered list
-7. Challenge/Dare Hook - challenges viewer
-8. Behind-the-Scenes Hook - exclusive content
-9. Comparison Hook - "X vs Y"
-10. Testimonial Hook - social proof
+Определение "hook":
+- это самое цепляющее событие в первые 5 секунд видео,
+- которое должно остановить скролл и заставить зрителя продолжить смотреть,
+- это может быть фраза, вопрос, визуальный приём, жёсткое обещание, шок, юмор, оффер и т.п.
 
-Context:
-${context}
+Важно:
+- Hook может быть НЕ только текстом / речью.
+- Hook может быть чисто визуальным: привлекательная девушка/парень крупным планом; быстрые смены кадров; крупный текст на экране; сильная эмоция; демонстрация результата; крупный показ продукта; деньги/роскошь; необычный ракурс или действие.
 
-Respond with ONLY the hook type name (e.g., "Question Hook" or "Story Hook"). If unclear, respond "Mixed Hook".`;
+Входные данные:
+${JSON.stringify(context, null, 2)}
+
+Твоя задача:
+1. Проанализировать ВСЕ каналы: речь, субтитры, подпись, текст на экране, визуальные события.
+2. Найти ОДИН главный хук — самый сильный и характерный.
+3. Описать его КОРОТКОЙ фразой (не длиннее 160 символов).
+4. Определить через какой канал реализован хук: VOICE, TEXT, VISUAL, MIX.
+5. Определить тип хука и силу (1-10).
+
+Верни СТРОГО один JSON-объект БЕЗ дополнительных комментариев:
+
+{
+  "hook_text": "строка с описанием главного хука",
+  "channel": "VOICE | TEXT | VISUAL | MIX",
+  "hook_type": "QUESTION | PAIN_POINT | BIG_PROMISE | PATTERN_INTERRUPT | STORY_PERSONAL | AUTHORITY_PROOF | HOW_TO | FOMO_URGENCY | VISUAL_SEX_APPEAL | VISUAL_MONEY_STATUS | RESULT_BEFORE_AFTER | OTHER",
+  "starts_with": "QUESTION | NUMBER | STATEMENT | VISUAL_ONLY",
+  "strength": 7
+}`;
 
     try {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -335,23 +357,117 @@ Respond with ONLY the hook type name (e.g., "Question Hook" or "Story Hook"). If
                     role: 'user',
                     content: prompt
                 }],
-                temperature: 0.1,
-                max_tokens: 50
+                temperature: 0.2,
+                max_tokens: 300,
+                response_format: { type: "json_object" }
             })
         });
         
         if (!response.ok) {
             log.warning(`Hook analysis error: ${response.status}`);
-            return 'Analysis Failed';
+            return formatHookFallback(audioTranscript, screenText, visualEvents);
         }
         
         const data = await response.json();
-        const hookType = data.choices[0].message.content.trim();
-        return hookType;
+        const hookData = JSON.parse(data.choices[0].message.content.trim());
+        
+        // Возвращаем объект для дальнейшей обработки
+        return hookData;
+        
     } catch (error) {
         log.warning(`Hook analysis exception: ${error.message}`);
-        return 'Analysis Error';
+        return formatHookFallback(audioTranscript, screenText, visualEvents);
     }
+}
+
+/**
+ * Парсит визуальные события в нужный формат
+ */
+function parseVisualEvents(visualEventsString) {
+    if (!visualEventsString) return [];
+    
+    const events = [];
+    const parts = visualEventsString.split(';');
+    
+    for (const part of parts) {
+        const match = part.trim().match(/^(\d+(?:\.\d+)?)s:(.+)$/);
+        if (match) {
+            const time = parseFloat(match[1]);
+            const event = match[2].trim();
+            
+            // Мапим наши события в стандартные типы
+            let eventType = 'OTHER';
+            if (event.includes('FACE_CLOSEUP')) eventType = 'FACE_CLOSEUP';
+            else if (event.includes('BIG_TEXT')) eventType = 'BIG_TEXT';
+            else if (event.includes('LOGO') || event.includes('BRAND')) eventType = 'LOGO_OR_PRODUCT';
+            else if (event.includes('SCENE_CHANGE')) eventType = 'QUICK_CUTS';
+            
+            events.push({
+                time,
+                event: eventType,
+                description: event
+            });
+        }
+    }
+    
+    return events;
+}
+
+/**
+ * Определяет язык контента
+ */
+function detectLanguage(caption, transcript) {
+    const text = (caption + ' ' + transcript).toLowerCase();
+    
+    if (/[а-яё]/.test(text)) return 'ru';
+    if (/[a-z]/.test(text) && text.length > 20) {
+        // Проверяем на индонезийские слова
+        const indonesianWords = ['yang', 'ini', 'itu', 'untuk', 'dengan', 'dari', 'tidak', 'siapa', 'apa', 'kapan'];
+        const hasIndonesian = indonesianWords.some(word => text.includes(word));
+        if (hasIndonesian) return 'id';
+        return 'en';
+    }
+    
+    return null;
+}
+
+/**
+ * Fallback если API не сработал
+ */
+function formatHookFallback(audioTranscript, screenText, visualEvents) {
+    const hasQuestion = /\?/.test(audioTranscript + screenText);
+    const hasFaceCloseup = /FACE_CLOSEUP/.test(visualEvents);
+    const hasBigText = /BIG_TEXT/.test(visualEvents);
+    
+    let hookType = 'OTHER';
+    let channel = 'MIX';
+    let startsW = 'STATEMENT';
+    let strength = 5;
+    
+    if (hasQuestion) {
+        hookType = 'QUESTION';
+        startsW = 'QUESTION';
+        strength = 7;
+    } else if (hasFaceCloseup) {
+        hookType = 'VISUAL_SEX_APPEAL';
+        channel = 'VISUAL';
+        startsW = 'VISUAL_ONLY';
+        strength = 6;
+    } else if (hasBigText && screenText) {
+        hookType = 'PATTERN_INTERRUPT';
+        channel = 'TEXT';
+        strength = 6;
+    }
+    
+    const hookText = audioTranscript.substring(0, 100) || screenText.substring(0, 100) || 'Visual hook';
+    
+    return {
+        hook_text: hookText,
+        channel,
+        hook_type: hookType,
+        starts_with: startsW,
+        strength
+    };
 }
 
 /**
@@ -392,8 +508,22 @@ async function saveToGoogleSheets(input, reel, results, apiKey) {
     
     // Анализируем тип хука
     log.info('Анализ типа хука...');
-    const hook_type = await analyzeHookType(caption, audio_transcript, screen_text, visual_events, apiKey);
-    log.info(`Тип хука: ${hook_type}`);
+    const hook_analysis = await analyzeHookType(caption, audio_transcript, screen_text, visual_events, apiKey);
+    
+    // Форматируем результат для отображения
+    let hook_display = 'Analysis Error';
+    try {
+        if (typeof hook_analysis === 'object') {
+            hook_display = `[${hook_analysis.hook_type}] ${hook_analysis.channel} (${hook_analysis.strength}/10): ${hook_analysis.hook_text}`;
+            log.info(`🎯 Хук: ${hook_analysis.hook_type} | Канал: ${hook_analysis.channel} | Сила: ${hook_analysis.strength}/10`);
+            log.info(`   Текст: ${hook_analysis.hook_text.substring(0, 80)}...`);
+        } else {
+            hook_display = String(hook_analysis);
+            log.info(`Тип хука: ${hook_display}`);
+        }
+    } catch (e) {
+        hook_display = 'Format Error';
+    }
     
     const row = [
         timestamp,                  // A: Timestamp
@@ -409,7 +539,7 @@ async function saveToGoogleSheets(input, reel, results, apiKey) {
         '',                        // K: Audio Transcript (EN) - для ручного перевода
         screen_text,               // L: Screen Text (ID)
         '',                        // M: Screen Text (ENG) - для ручного перевода
-        hook_type,                 // N: Hook Type - автоматически!
+        hook_display,              // N: Hook Type - автоматически с деталями!
         visual_events              // O: Visual Events
     ];
     
